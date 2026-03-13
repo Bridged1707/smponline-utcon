@@ -1,26 +1,18 @@
 from fastapi import APIRouter
 from typing import List, Dict, Any
 
-router = APIRouter()
+from utcon import db
+
+router = APIRouter(prefix="/v1/raw/shops", tags=["raw"])
 
 
-@router.post("/v1/raw/shops/record")
+@router.post("/record")
 async def record_shops(shops: List[Dict[str, Any]]):
-
     print(f"[UTCON] received {len(shops)} shops")
 
-    # Normalize to list
-    if isinstance(body, dict):
-        shops = [body]
-    else:
-        shops = body
-
     async with db.connection() as conn:
-
         async with conn.transaction():
-
             for shop in shops:
-
                 await conn.execute(
                     """
                     INSERT INTO shops(
@@ -61,20 +53,20 @@ async def record_shops(shops: List[Dict[str, Any]]):
                         last_seen = EXCLUDED.last_seen
                     """,
                     shop["id"],
-                    shop["owner"]["name"] if shop.get("owner") else None,
-                    shop["owner"]["uuid"] if shop.get("owner") else None,
-                    shop["location"]["world"],
-                    shop["location"]["x"],
-                    shop["location"]["y"],
-                    shop["location"]["z"],
-                    shop["type"],
-                    shop["price"],
-                    shop["remaining"],
-                    shop["item"]["type"],
-                    shop["item"].get("name"),
-                    shop["item"]["quantity"],
-                    shop["item"]["snbt"],
-                    int(time.time() * 1000)
+                    shop.get("owner_name"),
+                    shop.get("owner_uuid"),
+                    shop.get("world"),
+                    shop.get("x"),
+                    shop.get("y"),
+                    shop.get("z"),
+                    shop.get("shop_type"),
+                    shop.get("price"),
+                    shop.get("remaining"),
+                    shop.get("item_type"),
+                    shop.get("item_name"),
+                    shop.get("item_quantity"),
+                    shop.get("snbt"),
+                    shop.get("last_seen"),
                 )
 
     return {"status": "ok", "count": len(shops)}
