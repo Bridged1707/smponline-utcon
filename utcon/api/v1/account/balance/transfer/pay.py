@@ -5,6 +5,7 @@ from utcon.db import get_pool
 
 router = APIRouter()
 
+
 class PayRequest(BaseModel):
     from_discord_uuid: str
     to_discord_uuid: str
@@ -56,11 +57,10 @@ async def pay(req: PayRequest):
                 req.to_discord_uuid
             )
 
-            # sender ledger
             await conn.execute(
                 """
                 INSERT INTO balance_transfers
-                (discord_uuid, type, amount, status, from_discord_uuid, to_discord_uuid)
+                (discord_uuid,type,amount,status,from_discord_uuid,to_discord_uuid)
                 VALUES ($1,'pay_out',$2,'completed',$1,$3)
                 """,
                 req.from_discord_uuid,
@@ -68,11 +68,10 @@ async def pay(req: PayRequest):
                 req.to_discord_uuid
             )
 
-            # receiver ledger
             await conn.execute(
                 """
                 INSERT INTO balance_transfers
-                (discord_uuid, type, amount, status, from_discord_uuid, to_discord_uuid)
+                (discord_uuid,type,amount,status,from_discord_uuid,to_discord_uuid)
                 VALUES ($1,'pay_in',$2,'completed',$3,$1)
                 """,
                 req.to_discord_uuid,
