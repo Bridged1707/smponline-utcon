@@ -1,21 +1,36 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI
+from pathlib import Path
+import importlib
 
 from utcon import db
 
-from utcon.api.v1.account.balance import lookup
-from utcon.api.v1.account.balance.transfer import deposit, withdraw, transfer, topup
-
 app = FastAPI()
 
-v1_router = APIRouter(prefix="/v1")
+API_ROOT = Path(__file__).parent / "api"
 
-v1_router.include_router(lookup.router)
-v1_router.include_router(deposit.router)
-v1_router.include_router(withdraw.router)
-v1_router.include_router(transfer.router)
-v1_router.include_router(topup.router)
 
-app.include_router(v1_router)
+def load_routers():
+
+    for file in API_ROOT.rglob("*.py"):
+
+        if file.name.startswith("_"):
+            continue
+
+        module_path = (
+            "utcon."
+            + file.relative_to(Path(__file__).parent)
+            .with_suffix("")
+            .as_posix()
+            .replace("/", ".")
+        )
+
+        module = importlib.import_module(module_path)
+
+        if hasattr(module, "router"):
+            app.include_router(module.router)
+
+
+load_routers()
 
 
 @app.on_event("startup")
