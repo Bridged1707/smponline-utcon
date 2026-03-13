@@ -1,6 +1,11 @@
-from fastapi import FastAPI
-from pathlib import Path
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 import importlib
+import pkgutil
+from fastapi import FastAPI
 
 from utcon import db
 
