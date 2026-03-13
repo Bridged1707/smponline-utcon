@@ -7,14 +7,11 @@ router = APIRouter()
 @router.post("/record")
 async def record_shops(shops: list[dict]):
 
-    normalized_shops = []
+    normalized = []
 
     for shop in shops:
-        normalized = normalize_shop(shop)
-        normalized_shops.append(normalized)
+        normalized.append(normalize_shop(shop))
 
-    print(f"[UTCON] received {len(normalized_shops)} shops")
+    print(f"[UTCON] received {len(normalized)} shops")
 
-    return {
-        "received": len(normalized_shops)
-    }
+    return {"received": len(normalized)}
