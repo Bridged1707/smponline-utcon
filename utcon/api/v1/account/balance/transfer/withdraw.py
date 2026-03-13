@@ -31,13 +31,15 @@ async def withdraw(req: BalanceRequest):
             await conn.execute(
                 """
                 INSERT INTO balance_transfers (
+                    discord_uuid,
                     type,
                     from_discord_uuid,
                     amount,
                     status
                 )
-                VALUES ($1,$2,$3,$4)
+                VALUES ($1,$2,$3,$4,$5)
                 """,
+                req.discord_uuid,
                 "withdraw",
                 req.discord_uuid,
                 req.amount,
