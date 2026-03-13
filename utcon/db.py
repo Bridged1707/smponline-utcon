@@ -1,18 +1,35 @@
 import os
 import asyncpg
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+from pathlib import Path
+
+# force load .env from project root
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(env_path)
 
 _pool = None
 
 
 def build_dsn():
-    return (
-        f"postgresql://{os.getenv('UTDB_USER')}:"
-        f"{os.getenv('UTDB_PASSWORD')}@"
-        f"{os.getenv('UTDB_HOST')}:"
-        f"{os.getenv('UTDB_PORT')}/"
-        f"{os.getenv('UTDB_NAME')}"
-    )
+    host = os.getenv("UTDB_HOST")
+    port = os.getenv("UTDB_PORT")
+    name = os.getenv("UTDB_NAME")
+    user = os.getenv("UTDB_USER")
+    password = os.getenv("UTDB_PASSWORD")
+
+    if not host:
+        raise RuntimeError("UTDB_HOST missing")
+    if not port:
+        raise RuntimeError("UTDB_PORT missing")
+    if not name:
+        raise RuntimeError("UTDB_NAME missing")
+    if not user:
+        raise RuntimeError("UTDB_USER missing")
+    if not password:
+        raise RuntimeError("UTDB_PASSWORD missing")
+
+    return f"postgresql://{user}:{password}@{host}:{port}/{name}"
 
 
 async def connect():
