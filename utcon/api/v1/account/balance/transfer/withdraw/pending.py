@@ -2,13 +2,13 @@ from fastapi import APIRouter
 from utcon import db
 
 router = APIRouter(
-    prefix="/v1/admin/account/balance/transfer/deposit",
+    prefix="/v1/admin/account/balance/transfer/withdraw",
     tags=["admin"]
 )
 
 
 @router.get("/pending")
-async def pending_deposits():
+async def pending_withdrawals():
 
     async with db.connection() as conn:
 
@@ -16,7 +16,7 @@ async def pending_deposits():
             """
             SELECT id, discord_uuid, amount, created_at
             FROM balance_transfers
-            WHERE type='deposit'
+            WHERE type='withdraw'
             AND status='pending'
             ORDER BY created_at
             """

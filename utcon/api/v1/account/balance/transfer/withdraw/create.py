@@ -3,15 +3,14 @@ from utcon import db
 from utcon.schemas.balance import BalanceRequest
 from utcon.repositories import balance as balance_repo
 
-router = APIRouter(prefix="/v1/account/balance/transfer", tags=["balance"])
+router = APIRouter(prefix="/v1/account/balance/transfer/withdraw", tags=["balance"])
 
 
-@router.post("/withdraw")
+@router.post("")
 async def withdraw(req: BalanceRequest):
 
     async with db.connection() as conn:
 
-        # lock account balance to prevent race conditions
         async with conn.transaction():
 
             balance = await balance_repo.get_balance(
