@@ -2,10 +2,10 @@ import asyncpg
 import os
 
 DB_HOST = os.getenv("DB_HOST", "10.1.0.91")
-DB_PORT = os.getenv("DB_PORT", "9000")
-DB_NAME = os.getenv("DB_NAME", "postgres")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASS = os.getenv("DB_PASS", "")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "utdb")
+DB_USER = os.getenv("DB_USER", "utdb_api")
+DB_PASS = os.getenv("DB_PASS", "password")
 
 pool = None
 
@@ -19,7 +19,8 @@ async def get_pool():
             port=DB_PORT,
             user=DB_USER,
             password=DB_PASS,
-            database=DB_NAME
+            database=DB_NAME,
+            ssl=False
         )
 
     return pool

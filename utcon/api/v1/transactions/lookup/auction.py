@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.core.database import get_pool
+from utcon.core.database import get_pool
 
 router = APIRouter(prefix="/lookup/auction")
 
