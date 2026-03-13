@@ -1,32 +1,28 @@
-import requests
-from fastapi import APIRouter, HTTPException
-from utcon.schemas.account import RegisterAccount
+from fastapi import APIRouter
+from pydantic import BaseModel
 
-router = APIRouter()
+from utcon import db
+from utcon.repositories import account as account_repo
 
-UTDB_URL = "http://10.1.0.91:9000"
+router = APIRouter(prefix="/v1/account", tags=["account"])
+
+
+class RegisterRequest(BaseModel):
+    discord_uuid: str
+    mc_uuid: str
+    mc_name: str
 
 
 @router.post("/register")
-def register_account(account: RegisterAccount):
+async def register(req: RegisterRequest):
 
-    try:
-        r = requests.post(
-            f"{UTDB_URL}/accounts/register",
-            json=account.dict(),
-            timeout=5
+    async with db.connection() as conn:
+
+        await account_repo.create_account(
+            conn,
+            req.discord_uuid,
+            req.mc_uuid,
+            req.mc_name,
         )
 
-        r.raise_for_status()
-        return r.json()
-
-    except requests.exceptions.HTTPError as http_err:
-        raise HTTPException(status_code=r.status_code, detail=f"Registration failed: {r.text}")
-    except requests.exceptions.ConnectionError:
-        raise HTTPException(status_code=503, detail="Unable to reach registration service")
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=504, detail="Registration service timeout")
-    except requests.exceptions.JSONDecodeError:
-        raise HTTPException(status_code=502, detail="Invalid response from registration service")
-    except Exception as err:
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(err)}")
+    return {"status": "account_created"}

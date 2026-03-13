@@ -1,32 +1,21 @@
 from fastapi import APIRouter
+
 from utcon import db
-from ..schemas import DepositRequest
+from utcon.schemas.balance import BalanceRequest
+from utcon.repositories import balance as balance_repo
 
-router = APIRouter()
+router = APIRouter(prefix="/v1/account/balance/transfer", tags=["balance"])
 
 
-@router.post("/account/balance/transfer/deposit")
-async def deposit(req: DepositRequest):
+@router.post("/deposit")
+async def deposit(req: BalanceRequest):
 
     async with db.connection() as conn:
 
-        await conn.execute(
-            """
-            INSERT INTO balances (discord_uuid, balance)
-            VALUES ($1,$2)
-            ON CONFLICT (discord_uuid)
-            DO UPDATE SET balance = balances.balance + $2
-            """,
+        await balance_repo.add_balance(
+            conn,
             req.discord_uuid,
-            req.amount
+            req.amount,
         )
 
-        row = await conn.fetchrow(
-            "SELECT balance FROM balances WHERE discord_uuid=$1",
-            req.discord_uuid
-        )
-
-        return {
-            "discord_uuid": req.discord_uuid,
-            "new_balance": float(row["balance"])
-        }
+    return {"status": "deposit_complete"}

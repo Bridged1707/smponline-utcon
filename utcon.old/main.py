@@ -4,7 +4,7 @@ import importlib
 
 from utcon import db
 
-app = FastAPI(title="UTCON Utility Connector")
+app = FastAPI()
 
 API_ROOT = Path(__file__).parent / "api"
 

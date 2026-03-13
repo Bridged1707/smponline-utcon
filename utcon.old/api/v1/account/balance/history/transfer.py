@@ -1,18 +1,23 @@
 from fastapi import APIRouter
-
 from utcon import db
 
-router = APIRouter(prefix="/v1/account/balance/history", tags=["balance"])
+router = APIRouter()
 
 
-@router.get("/transfer")
+@router.get("/account/balance/history/transfer")
 async def transfer_history(discord_uuid: str, limit: int = 50):
 
     async with db.connection() as conn:
 
         rows = await conn.fetch(
             """
-            SELECT *
+            SELECT
+                id,
+                type,
+                from_discord_uuid,
+                to_discord_uuid,
+                amount,
+                created_at
             FROM transactions
             WHERE
                 from_discord_uuid=$1
@@ -21,7 +26,7 @@ async def transfer_history(discord_uuid: str, limit: int = 50):
             LIMIT $2
             """,
             discord_uuid,
-            limit,
+            limit
         )
 
-    return [dict(r) for r in rows]
+        return [dict(r) for r in rows]

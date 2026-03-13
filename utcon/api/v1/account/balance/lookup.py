@@ -1,23 +1,16 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+
 from utcon import db
+from utcon.repositories import balance as balance_repo
 
-router = APIRouter()
+router = APIRouter(prefix="/v1/account/balance", tags=["balance"])
 
 
-@router.get("/account/balance/lookup")
-async def lookup_balance(discord_uuid: str):
+@router.get("/lookup")
+async def lookup(discord_uuid: str):
 
     async with db.connection() as conn:
 
-        row = await conn.fetchrow(
-            "SELECT balance FROM balances WHERE discord_uuid=$1",
-            discord_uuid
-        )
+        balance = await balance_repo.get_balance(conn, discord_uuid)
 
-        if row is None:
-            raise HTTPException(status_code=404, detail="Account not found")
-
-        return {
-            "discord_uuid": discord_uuid,
-            "balance": float(row["balance"])
-        }
+    return {"discord_uuid": discord_uuid, "balance": balance}
