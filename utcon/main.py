@@ -1,6 +1,4 @@
-import os
 import importlib
-import pkgutil
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -16,9 +14,7 @@ API_ROOT = Path(__file__).parent / "api"
 
 
 def load_routers():
-
     for file in API_ROOT.rglob("*.py"):
-
         if file.name.startswith("_"):
             continue
 

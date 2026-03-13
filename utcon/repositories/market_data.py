@@ -1,0 +1,234 @@
+from typing import Any, Dict, List, Optional
+
+
+async def upsert_market_quote(conn, payload: Dict[str, Any]) -> None:
+    await conn.execute(
+        """
+        INSERT INTO market_quotes (
+            symbol_code,
+            as_of_ts,
+            last_trade_price,
+            last_trade_ts,
+            best_bid,
+            best_bid_ts,
+            best_ask,
+            best_ask_ts,
+            mid_price,
+            mark_price,
+            previous_close,
+            session_open,
+            updated_at
+        )
+        VALUES (
+            $1, $2, $3, $4, $5, $6,
+            $7, $8, $9, $10, $11, $12, NOW()
+        )
+        ON CONFLICT (symbol_code)
+        DO UPDATE SET
+            as_of_ts = EXCLUDED.as_of_ts,
+            last_trade_price = EXCLUDED.last_trade_price,
+            last_trade_ts = EXCLUDED.last_trade_ts,
+            best_bid = EXCLUDED.best_bid,
+            best_bid_ts = EXCLUDED.best_bid_ts,
+            best_ask = EXCLUDED.best_ask,
+            best_ask_ts = EXCLUDED.best_ask_ts,
+            mid_price = EXCLUDED.mid_price,
+            mark_price = EXCLUDED.mark_price,
+            previous_close = EXCLUDED.previous_close,
+            session_open = EXCLUDED.session_open,
+            updated_at = NOW()
+        """,
+        payload["symbol_code"],
+        payload["as_of_ts"],
+        payload.get("last_trade_price"),
+        payload.get("last_trade_ts"),
+        payload.get("best_bid"),
+        payload.get("best_bid_ts"),
+        payload.get("best_ask"),
+        payload.get("best_ask_ts"),
+        payload.get("mid_price"),
+        payload.get("mark_price"),
+        payload.get("previous_close"),
+        payload.get("session_open"),
+    )
+
+
+async def upsert_market_candles(
+    conn,
+    symbol_code: str,
+    interval_key: str,
+    candles: List[Dict[str, Any]],
+) -> int:
+    count = 0
+
+    for candle in candles:
+        await conn.execute(
+            """
+            INSERT INTO market_candles (
+                symbol_code,
+                interval_key,
+                bucket_start_ts,
+                bucket_end_ts,
+                open,
+                high,
+                low,
+                close,
+                vwap,
+                median,
+                trade_volume,
+                trade_count,
+                buy_volume,
+                sell_volume,
+                best_bid,
+                best_ask,
+                midpoint,
+                source_trade_count,
+                source_shop_count,
+                updated_at
+            )
+            VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW()
+            )
+            ON CONFLICT (symbol_code, interval_key, bucket_start_ts)
+            DO UPDATE SET
+                bucket_end_ts = EXCLUDED.bucket_end_ts,
+                open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                vwap = EXCLUDED.vwap,
+                median = EXCLUDED.median,
+                trade_volume = EXCLUDED.trade_volume,
+                trade_count = EXCLUDED.trade_count,
+                buy_volume = EXCLUDED.buy_volume,
+                sell_volume = EXCLUDED.sell_volume,
+                best_bid = EXCLUDED.best_bid,
+                best_ask = EXCLUDED.best_ask,
+                midpoint = EXCLUDED.midpoint,
+                source_trade_count = EXCLUDED.source_trade_count,
+                source_shop_count = EXCLUDED.source_shop_count,
+                updated_at = NOW()
+            """,
+            symbol_code,
+            interval_key,
+            candle["bucket_start_ts"],
+            candle["bucket_end_ts"],
+            candle.get("open"),
+            candle.get("high"),
+            candle.get("low"),
+            candle.get("close"),
+            candle.get("vwap"),
+            candle.get("median"),
+            candle.get("trade_volume", 0.0),
+            candle.get("trade_count", 0),
+            candle.get("buy_volume", 0.0),
+            candle.get("sell_volume", 0.0),
+            candle.get("best_bid"),
+            candle.get("best_ask"),
+            candle.get("midpoint"),
+            candle.get("source_trade_count", 0),
+            candle.get("source_shop_count", 0),
+        )
+        count += 1
+
+    return count
+
+
+async def get_market_quote(conn, symbol_code: str) -> Optional[Dict[str, Any]]:
+    row = await conn.fetchrow(
+        """
+        SELECT
+            mq.symbol_code,
+            mq.as_of_ts,
+            mq.last_trade_price,
+            mq.last_trade_ts,
+            mq.best_bid,
+            mq.best_bid_ts,
+            mq.best_ask,
+            mq.best_ask_ts,
+            mq.mid_price,
+            mq.mark_price,
+            mq.previous_close,
+            mq.session_open,
+            mq.updated_at,
+            ms.name AS symbol_name,
+            ms.description AS symbol_description,
+            ms.pricing_method,
+            ms.display_price_source
+        FROM market_quotes mq
+        JOIN market_symbols ms
+          ON ms.code = mq.symbol_code
+        WHERE mq.symbol_code = $1
+        """,
+        symbol_code,
+    )
+
+    return dict(row) if row else None
+
+
+async def get_market_symbol(conn, symbol_code: str) -> Optional[Dict[str, Any]]:
+    row = await conn.fetchrow(
+        """
+        SELECT
+            code,
+            name,
+            description,
+            pricing_method,
+            display_price_source,
+            is_active,
+            created_at,
+            updated_at
+        FROM market_symbols
+        WHERE code = $1
+        """,
+        symbol_code,
+    )
+
+    return dict(row) if row else None
+
+
+async def get_market_candles(
+    conn,
+    symbol_code: str,
+    interval_key: str,
+    from_ts: int,
+    to_ts: int,
+) -> List[Dict[str, Any]]:
+    rows = await conn.fetch(
+        """
+        SELECT
+            symbol_code,
+            interval_key,
+            bucket_start_ts,
+            bucket_end_ts,
+            open,
+            high,
+            low,
+            close,
+            vwap,
+            median,
+            trade_volume,
+            trade_count,
+            buy_volume,
+            sell_volume,
+            best_bid,
+            best_ask,
+            midpoint,
+            source_trade_count,
+            source_shop_count,
+            updated_at
+        FROM market_candles
+        WHERE symbol_code = $1
+          AND interval_key = $2
+          AND bucket_start_ts >= $3
+          AND bucket_start_ts <= $4
+        ORDER BY bucket_start_ts ASC
+        """,
+        symbol_code,
+        interval_key,
+        from_ts,
+        to_ts,
+    )
+
+    return [dict(row) for row in rows]
