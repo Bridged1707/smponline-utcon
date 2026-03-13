@@ -1,6 +1,7 @@
 # utcon.main or wherever you build app
 from fastapi import FastAPI
-from utcon.api.v1.account.balance import lookup, deposit, withdraw, transfer, topup, _db
+from utcon.api.v1.account.balance import lookup, _db
+from utcon.api.v1.account.balance.transfer import deposit, withdraw, transfer, topup
 
 app = FastAPI()
 
@@ -17,7 +18,7 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     await _db.close_pool()
-    
+
 @app.get("/")
 def root():
     return {"status": "online"}

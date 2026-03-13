@@ -1,8 +1,8 @@
 # deposit.py
 from fastapi import APIRouter, HTTPException
-from .schemas import TransferRequest
-from ._db import get_pool
-from .utils import get_account_and_rates, ensure_balance_row
+from ..schemas import TransferRequest
+from .._db import get_pool
+from ..utils import get_account_and_rates, ensure_balance_row
 import decimal, json
 
 router = APIRouter()
