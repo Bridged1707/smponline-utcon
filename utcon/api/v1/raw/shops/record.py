@@ -1,18 +1,25 @@
 from fastapi import APIRouter
 from utcon import db
+import time
 
 router = APIRouter(prefix="/v1/raw", tags=["raw"])
 
 
 @router.post("/shops/record")
-@router.post("/shop/record")  # compatibility route
-async def record_shops(payload: list):
+@router.post("/shop/record")  # compatibility
+async def record_shops(body: dict | list):
+
+    # Normalize to list
+    if isinstance(body, dict):
+        shops = [body]
+    else:
+        shops = body
 
     async with db.connection() as conn:
 
         async with conn.transaction():
 
-            for shop in payload:
+            for shop in shops:
 
                 await conn.execute(
                     """
@@ -64,10 +71,10 @@ async def record_shops(payload: list):
                     shop["price"],
                     shop["remaining"],
                     shop["item"]["type"],
-                    shop["item"]["name"] if shop["item"].get("name") else None,
+                    shop["item"].get("name"),
                     shop["item"]["quantity"],
                     shop["item"]["snbt"],
-                    shop.get("lastSeen", 0)
+                    int(time.time() * 1000)
                 )
 
-    return {"status": "shops_recorded", "count": len(payload)}
+    return {"status": "shops_recorded", "count": len(shops)}
