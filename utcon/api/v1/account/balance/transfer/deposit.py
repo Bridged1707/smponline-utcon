@@ -1,5 +1,4 @@
 from fastapi import APIRouter
-
 from utcon import db
 from utcon.schemas.balance import BalanceRequest
 from utcon.repositories import balance as balance_repo
@@ -16,6 +15,20 @@ async def deposit(req: BalanceRequest):
             conn,
             req.discord_uuid,
             req.amount,
+        )
+
+        await conn.execute(
+            """
+            INSERT INTO balance_transfers(
+                type,
+                to_discord_uuid,
+                amount,
+                status
+            )
+            VALUES ('deposit',$1,$2,'completed')
+            """,
+            req.discord_uuid,
+            req.amount
         )
 
     return {"status": "deposit_complete"}

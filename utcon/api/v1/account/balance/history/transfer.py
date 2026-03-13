@@ -13,7 +13,9 @@ async def transfer_history(discord_uuid: str, limit: int = 50):
             """
             SELECT *
             FROM balance_transfers
-            WHERE discord_uuid=$1
+            WHERE
+                from_discord_uuid=$1
+                OR to_discord_uuid=$1
             ORDER BY created_at DESC
             LIMIT $2
             """,

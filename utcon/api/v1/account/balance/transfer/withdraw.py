@@ -1,5 +1,4 @@
 from fastapi import APIRouter, HTTPException
-
 from utcon import db
 from utcon.schemas.balance import BalanceRequest
 from utcon.repositories import balance as balance_repo
@@ -14,7 +13,7 @@ async def withdraw(req: BalanceRequest):
 
         balance = await balance_repo.get_balance(
             conn,
-            req.discord_uuid,
+            req.discord_uuid
         )
 
         if balance < req.amount:
@@ -23,7 +22,21 @@ async def withdraw(req: BalanceRequest):
         await balance_repo.subtract_balance(
             conn,
             req.discord_uuid,
-            req.amount,
+            req.amount
+        )
+
+        await conn.execute(
+            """
+            INSERT INTO balance_transfers(
+                type,
+                from_discord_uuid,
+                amount,
+                status
+            )
+            VALUES ('withdraw',$1,$2,'completed')
+            """,
+            req.discord_uuid,
+            req.amount
         )
 
     return {"status": "withdraw_complete"}
