@@ -1,13 +1,13 @@
 from fastapi import APIRouter
-from utcon import db
-import time
+from typing import List, Dict, Any
 
-router = APIRouter(prefix="/v1/raw", tags=["raw"])
+router = APIRouter()
 
 
-@router.post("/shops/record")
-@router.post("/shop/record")  # compatibility
-async def record_shops(body: dict | list):
+@router.post("/v1/raw/shops/record")
+async def record_shops(shops: List[Dict[str, Any]]):
+
+    print(f"[UTCON] received {len(shops)} shops")
 
     # Normalize to list
     if isinstance(body, dict):
@@ -77,4 +77,4 @@ async def record_shops(body: dict | list):
                     int(time.time() * 1000)
                 )
 
-    return {"status": "shops_recorded", "count": len(shops)}
+    return {"status": "ok", "count": len(shops)}
