@@ -1,5 +1,6 @@
 import os
 import asyncpg
+from contextlib import asynccontextmanager
 
 pool = None
 
@@ -9,7 +10,7 @@ async def connect():
 
     pool = await asyncpg.create_pool(
         host=os.getenv("UTDB_HOST"),
-        port=int(os.getenv("UTDB_PORT")),
+        port=int(os.getenv("UTDB_PORT", 5432)),
         user=os.getenv("UTDB_USER"),
         password=os.getenv("UTDB_PASSWORD"),
         database=os.getenv("UTDB_NAME"),
@@ -26,3 +27,12 @@ async def disconnect():
 
 def get_pool():
     return pool
+
+
+@asynccontextmanager
+async def connection():
+    conn = await pool.acquire()
+    try:
+        yield conn
+    finally:
+        await pool.release(conn)

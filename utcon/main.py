@@ -1,13 +1,14 @@
 import os
-from dotenv import load_dotenv
-
-load_dotenv()
-
 import importlib
 import pkgutil
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 
 from utcon import db
+
+load_dotenv()
 
 app = FastAPI(title="UTCON Utility Connector")
 
