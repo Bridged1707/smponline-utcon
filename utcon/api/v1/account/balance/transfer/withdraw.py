@@ -11,32 +11,37 @@ async def withdraw(req: BalanceRequest):
 
     async with db.connection() as conn:
 
-        balance = await balance_repo.get_balance(
-            conn,
-            req.discord_uuid
-        )
+        # lock account balance to prevent race conditions
+        async with conn.transaction():
 
-        if balance < req.amount:
-            raise HTTPException(status_code=400, detail="Insufficient funds")
-
-        await balance_repo.subtract_balance(
-            conn,
-            req.discord_uuid,
-            req.amount
-        )
-
-        await conn.execute(
-            """
-            INSERT INTO balance_transfers(
-                type,
-                from_discord_uuid,
-                amount,
-                status
+            balance = await balance_repo.get_balance(
+                conn,
+                req.discord_uuid
             )
-            VALUES ('withdraw',$1,$2,'completed')
-            """,
-            req.discord_uuid,
-            req.amount
-        )
+
+            if balance < req.amount:
+                raise HTTPException(status_code=400, detail="Insufficient funds")
+
+            await balance_repo.subtract_balance(
+                conn,
+                req.discord_uuid,
+                req.amount
+            )
+
+            await conn.execute(
+                """
+                INSERT INTO balance_transfers (
+                    type,
+                    from_discord_uuid,
+                    amount,
+                    status
+                )
+                VALUES ($1,$2,$3,$4)
+                """,
+                "withdraw",
+                req.discord_uuid,
+                req.amount,
+                "completed"
+            )
 
     return {"status": "withdraw_complete"}

@@ -38,6 +38,9 @@ def load_routers():
 
 load_routers()
 
+for route in app.routes:
+    print(route.path)
+
 
 @app.on_event("startup")
 async def startup():

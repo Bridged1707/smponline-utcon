@@ -1,34 +1,30 @@
 from fastapi import APIRouter
-from utcon import db
-from utcon.schemas.balance import BalanceRequest
-from utcon.repositories import balance as balance_repo
+from pydantic import BaseModel
+import utcon.db as db
 
-router = APIRouter(prefix="/v1/account/balance/transfer", tags=["balance"])
+router = APIRouter()
 
 
-@router.post("/deposit")
-async def deposit(req: BalanceRequest):
+class DepositRequest(BaseModel):
+    discord_uuid: str
+    amount: float
+
+
+@router.post("/v1/account/balance/transfer/deposit")
+async def deposit(req: DepositRequest):
 
     async with db.connection() as conn:
 
-        await balance_repo.add_balance(
-            conn,
-            req.discord_uuid,
-            req.amount,
-        )
-
         await conn.execute(
             """
-            INSERT INTO balance_transfers(
-                type,
-                to_discord_uuid,
-                amount,
-                status
-            )
-            VALUES ('deposit',$1,$2,'completed')
+            INSERT INTO balance_transfers
+            (discord_uuid, type, amount, status)
+            VALUES ($1,$2,$3,$4)
             """,
             req.discord_uuid,
-            req.amount
+            "deposit",
+            req.amount,
+            "completed"
         )
 
-    return {"status": "deposit_complete"}
+    return {"status": "success"}
