@@ -10,10 +10,16 @@ router = APIRouter(prefix="/api/v1/market/chart", tags=["market"])
 
 
 RANGE_CONFIG: Dict[str, Dict[str, int | str | None]] = {
-    "1H": {"interval": "1m", "duration_ms": 60 * 60 * 1000},
-    "1D": {"interval": "5m", "duration_ms": 24 * 60 * 60 * 1000},
+    "1M": {"interval": "1m", "duration_ms": 1 * 60 * 1000},
+    "15M": {"interval": "1m", "duration_ms": 15 * 60 * 1000},
+    "1H": {"interval": "1m", "duration_ms": 1 * 60 * 60 * 1000},
+    "3H": {"interval": "5m", "duration_ms": 3 * 60 * 60 * 1000},
+    "12H": {"interval": "15m", "duration_ms": 12 * 60 * 60 * 1000},
+    "1D": {"interval": "5m", "duration_ms": 1 * 24 * 60 * 60 * 1000},
+    "7D": {"interval": "1h", "duration_ms": 7 * 24 * 60 * 60 * 1000},
+    "14D": {"interval": "4h", "duration_ms": 14 * 24 * 60 * 60 * 1000},
+    "1MO": {"interval": "1d", "duration_ms": 30 * 24 * 60 * 60 * 1000},
     "1W": {"interval": "15m", "duration_ms": 7 * 24 * 60 * 60 * 1000},
-    "1M": {"interval": "1h", "duration_ms": 30 * 24 * 60 * 60 * 1000},
     "3M": {"interval": "4h", "duration_ms": 90 * 24 * 60 * 60 * 1000},
     "1Y": {"interval": "1d", "duration_ms": 365 * 24 * 60 * 60 * 1000},
     "ALL": {"interval": "1d", "duration_ms": None},
@@ -66,7 +72,23 @@ async def lookup_market_chart(
     symbol_code: str,
     range_key: str = Query(default="1D", alias="range"),
 ):
-    range_key = range_key.upper()
+    raw_range = range_key.strip()
+    normalized = raw_range.upper()
+
+    aliases = {
+        "1MIN": "1M",
+        "15MIN": "15M",
+        "60M": "1H",
+        "1HR": "1H",
+        "3HR": "3H",
+        "12HR": "12H",
+        "1DAY": "1D",
+        "7DAY": "7D",
+        "14DAY": "14D",
+        "1MONTH": "1MO",
+    }
+
+    range_key = aliases.get(normalized, normalized)
 
     if range_key not in RANGE_CONFIG:
         raise HTTPException(status_code=400, detail="invalid_range")
