@@ -53,6 +53,114 @@ async def upsert_market_quote(conn, payload: Dict[str, Any]) -> None:
     )
 
 
+async def upsert_market_quote_sample(conn, payload: Dict[str, Any]) -> None:
+    await conn.execute(
+        """
+        INSERT INTO market_quote_samples (
+            symbol_code,
+            sample_ts,
+            last_trade_price,
+            best_bid,
+            best_ask,
+            mid_price,
+            microprice,
+            mark_price,
+            bid_liquidity,
+            ask_liquidity,
+            trade_count_delta,
+            trade_volume_delta,
+            source_trade_count,
+            source_shop_count,
+            is_synthetic,
+            created_at
+        )
+        VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, $11, $12, $13, $14, $15, NOW()
+        )
+        ON CONFLICT (symbol_code, sample_ts)
+        DO UPDATE SET
+            last_trade_price = EXCLUDED.last_trade_price,
+            best_bid = EXCLUDED.best_bid,
+            best_ask = EXCLUDED.best_ask,
+            mid_price = EXCLUDED.mid_price,
+            microprice = EXCLUDED.microprice,
+            mark_price = EXCLUDED.mark_price,
+            bid_liquidity = EXCLUDED.bid_liquidity,
+            ask_liquidity = EXCLUDED.ask_liquidity,
+            trade_count_delta = EXCLUDED.trade_count_delta,
+            trade_volume_delta = EXCLUDED.trade_volume_delta,
+            source_trade_count = EXCLUDED.source_trade_count,
+            source_shop_count = EXCLUDED.source_shop_count,
+            is_synthetic = EXCLUDED.is_synthetic
+        """,
+        payload["symbol_code"],
+        payload["sample_ts"],
+        payload.get("last_trade_price"),
+        payload.get("best_bid"),
+        payload.get("best_ask"),
+        payload.get("mid_price"),
+        payload.get("microprice"),
+        payload.get("mark_price"),
+        payload.get("bid_liquidity", 0.0),
+        payload.get("ask_liquidity", 0.0),
+        payload.get("trade_count_delta", 0),
+        payload.get("trade_volume_delta", 0.0),
+        payload.get("source_trade_count", 0),
+        payload.get("source_shop_count", 0),
+        payload.get("is_synthetic", False),
+    )
+
+
+async def get_market_quote_samples(
+    conn,
+    symbol_code: str,
+    from_ts: int,
+    to_ts: int,
+    limit: Optional[int] = None,
+    newest_first: bool = False,
+) -> List[Dict[str, Any]]:
+    order_sql = "DESC" if newest_first else "ASC"
+
+    limit_sql = ""
+    params: List[Any] = [symbol_code, from_ts, to_ts]
+
+    if limit is not None:
+        params.append(limit)
+        limit_sql = f"LIMIT ${len(params)}"
+
+    rows = await conn.fetch(
+        f"""
+        SELECT
+            symbol_code,
+            sample_ts,
+            last_trade_price,
+            best_bid,
+            best_ask,
+            mid_price,
+            microprice,
+            mark_price,
+            bid_liquidity,
+            ask_liquidity,
+            trade_count_delta,
+            trade_volume_delta,
+            source_trade_count,
+            source_shop_count,
+            is_synthetic,
+            created_at
+        FROM market_quote_samples
+        WHERE symbol_code = $1
+          AND sample_ts >= $2
+          AND sample_ts <= $3
+        ORDER BY sample_ts {order_sql}
+        {limit_sql}
+        """,
+        *params,
+    )
+
+    return [dict(row) for row in rows]
+
+
 async def upsert_market_candles(
     conn,
     symbol_code: str,
@@ -232,3 +340,47 @@ async def get_market_candles(
     )
 
     return [dict(row) for row in rows]
+
+
+async def get_last_market_candle_before(
+    conn,
+    symbol_code: str,
+    interval_key: str,
+    before_ts: int,
+) -> Optional[Dict[str, Any]]:
+    row = await conn.fetchrow(
+        """
+        SELECT
+            symbol_code,
+            interval_key,
+            bucket_start_ts,
+            bucket_end_ts,
+            open,
+            high,
+            low,
+            close,
+            vwap,
+            median,
+            trade_volume,
+            trade_count,
+            buy_volume,
+            sell_volume,
+            best_bid,
+            best_ask,
+            midpoint,
+            source_trade_count,
+            source_shop_count,
+            updated_at
+        FROM market_candles
+        WHERE symbol_code = $1
+          AND interval_key = $2
+          AND bucket_start_ts < $3
+        ORDER BY bucket_start_ts DESC
+        LIMIT 1
+        """,
+        symbol_code,
+        interval_key,
+        before_ts,
+    )
+
+    return dict(row) if row else None

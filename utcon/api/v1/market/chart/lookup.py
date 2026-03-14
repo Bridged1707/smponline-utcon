@@ -1,5 +1,5 @@
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -24,6 +24,19 @@ RANGE_CONFIG: Dict[str, Dict[str, int | str | None]] = {
     "1Y": {"interval": "1d", "duration_ms": 365 * 24 * 60 * 60 * 1000},
     "ALL": {"interval": "1d", "duration_ms": None},
 }
+
+INTERVAL_TO_MS = {
+    "1m": 60 * 1000,
+    "5m": 5 * 60 * 1000,
+    "15m": 15 * 60 * 1000,
+    "1h": 60 * 60 * 1000,
+    "4h": 4 * 60 * 60 * 1000,
+    "1d": 24 * 60 * 60 * 1000,
+}
+
+
+def align_bucket_start(ts_ms: int, interval_ms: int) -> int:
+    return (ts_ms // interval_ms) * interval_ms
 
 
 def compute_chart_stats(candles: List[dict]) -> dict:
@@ -65,6 +78,71 @@ def compute_chart_stats(candles: List[dict]) -> dict:
         "volume": volume,
         "trade_count": trade_count,
     }
+
+
+def densify_candles(
+    candles: List[dict],
+    interval_key: str,
+    from_ts: int,
+    to_ts: int,
+    seed_candle: Optional[dict] = None,
+) -> List[dict]:
+    interval_ms = INTERVAL_TO_MS[interval_key]
+    aligned_from = align_bucket_start(from_ts, interval_ms)
+    aligned_to = align_bucket_start(to_ts, interval_ms)
+
+    candle_map = {
+        int(c["bucket_start_ts"]): dict(c)
+        for c in candles
+    }
+
+    result: List[dict] = []
+
+    carry_close = seed_candle.get("close") if seed_candle else None
+    carry_best_bid = seed_candle.get("best_bid") if seed_candle else None
+    carry_best_ask = seed_candle.get("best_ask") if seed_candle else None
+    carry_midpoint = seed_candle.get("midpoint") if seed_candle else None
+
+    bucket_start = aligned_from
+    while bucket_start <= aligned_to:
+        candle = candle_map.get(bucket_start)
+        if candle is not None:
+            result.append(candle)
+            if candle.get("close") is not None:
+                carry_close = candle.get("close")
+            if candle.get("best_bid") is not None:
+                carry_best_bid = candle.get("best_bid")
+            if candle.get("best_ask") is not None:
+                carry_best_ask = candle.get("best_ask")
+            if candle.get("midpoint") is not None:
+                carry_midpoint = candle.get("midpoint")
+        elif carry_close is not None:
+            result.append({
+                "symbol_code": candles[0].get("symbol_code") if candles else None,
+                "interval_key": interval_key,
+                "bucket_start_ts": bucket_start,
+                "bucket_end_ts": bucket_start + interval_ms - 1,
+                "open": carry_close,
+                "high": carry_close,
+                "low": carry_close,
+                "close": carry_close,
+                "vwap": None,
+                "median": carry_close,
+                "trade_volume": 0.0,
+                "trade_count": 0,
+                "buy_volume": 0.0,
+                "sell_volume": 0.0,
+                "best_bid": carry_best_bid,
+                "best_ask": carry_best_ask,
+                "midpoint": carry_midpoint,
+                "source_trade_count": 0,
+                "source_shop_count": 0,
+                "updated_at": None,
+            })
+
+        bucket_start += interval_ms
+
+    return result
 
 
 @router.get("/{symbol_code}")
@@ -116,6 +194,21 @@ async def lookup_market_chart(
             from_ts=from_ts,
             to_ts=to_ts,
         )
+
+        seed_candle = await market_repo.get_last_market_candle_before(
+            conn,
+            symbol_code=symbol_code,
+            interval_key=interval_key,
+            before_ts=from_ts,
+        )
+
+    candles = densify_candles(
+        candles=candles,
+        interval_key=interval_key,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        seed_candle=seed_candle,
+    )
 
     stats = compute_chart_stats(candles)
 

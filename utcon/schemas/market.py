@@ -23,6 +23,28 @@ class MarketQuoteUpsertRequest(BaseModel):
     session_open: Optional[float] = None
 
 
+class MarketQuoteSampleUpsertRequest(BaseModel):
+    symbol_code: str
+    sample_ts: int
+
+    last_trade_price: Optional[float] = None
+    best_bid: Optional[float] = None
+    best_ask: Optional[float] = None
+    mid_price: Optional[float] = None
+    microprice: Optional[float] = None
+    mark_price: Optional[float] = None
+
+    bid_liquidity: float = 0.0
+    ask_liquidity: float = 0.0
+
+    trade_count_delta: int = 0
+    trade_volume_delta: float = 0.0
+
+    source_trade_count: int = 0
+    source_shop_count: int = 0
+    is_synthetic: bool = False
+
+
 class MarketCandleUpsertItem(BaseModel):
     bucket_start_ts: int
     bucket_end_ts: int
