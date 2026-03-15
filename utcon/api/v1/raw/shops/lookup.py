@@ -15,8 +15,10 @@ async def lookup_shops(
     shop_type: Optional[str] = None,
     active_only: bool = False,
     last_seen_since_ts: Optional[int] = None,
+    exact_price: Optional[float] = None,
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
+    item_quantity: Optional[int] = None,
     min_remaining: Optional[int] = None,
     limit: int = Query(default=100, ge=1, le=5000),
     order_by: Literal["last_seen", "price", "shop_id"] = "last_seen",
@@ -41,10 +43,14 @@ async def lookup_shops(
         where_clauses.append("remaining > 0")
     if last_seen_since_ts is not None:
         where_clauses.append(f"last_seen >= {add_param(last_seen_since_ts)}")
+    if exact_price is not None:
+        where_clauses.append(f"price = {add_param(exact_price)}")
     if min_price is not None:
         where_clauses.append(f"price >= {add_param(min_price)}")
     if max_price is not None:
         where_clauses.append(f"price <= {add_param(max_price)}")
+    if item_quantity is not None:
+        where_clauses.append(f"item_quantity = {add_param(item_quantity)}")
     if min_remaining is not None:
         where_clauses.append(f"remaining >= {add_param(min_remaining)}")
 

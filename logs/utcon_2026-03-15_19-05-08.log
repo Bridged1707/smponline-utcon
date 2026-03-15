@@ -1,0 +1,198 @@
+[UTCON] loaded router modules:
+[UTCON]   utcon.api.v1.account.balance.history.transfer
+[UTCON]   utcon.api.v1.account.balance.lookup
+[UTCON]   utcon.api.v1.account.balance.transfer.deposit.create
+[UTCON]   utcon.api.v1.account.balance.transfer.deposit.pending
+[UTCON]   utcon.api.v1.account.balance.transfer.pay
+[UTCON]   utcon.api.v1.account.balance.transfer.withdraw.create
+[UTCON]   utcon.api.v1.account.balance.transfer.withdraw.pending
+[UTCON]   utcon.api.v1.account.register
+[UTCON]   utcon.api.v1.market.candles.upsert
+[UTCON]   utcon.api.v1.market.chart.lookup
+[UTCON]   utcon.api.v1.market.config.lookup
+[UTCON]   utcon.api.v1.market.families.list
+[UTCON]   utcon.api.v1.market.families.lookup
+[UTCON]   utcon.api.v1.market.quotes.lookup
+[UTCON]   utcon.api.v1.market.quotes.upsert
+[UTCON]   utcon.api.v1.market.samples.lookup
+[UTCON]   utcon.api.v1.market.samples.upsert
+[UTCON]   utcon.api.v1.market.symbols.composition
+[UTCON]   utcon.api.v1.market.symbols.config
+[UTCON]   utcon.api.v1.market.symbols.list
+[UTCON]   utcon.api.v1.market.symbols.lookup
+[UTCON]   utcon.api.v1.raw.shops.lookup
+[UTCON]   utcon.api.v1.raw.shops.record
+[UTCON]   utcon.api.v1.raw.transactions.lookup
+[UTCON]   utcon.api.v1.raw.transactions.record
+[UTCON] registered routes:
+[UTCON]   /openapi.json
+[UTCON]   /docs
+[UTCON]   /docs/oauth2-redirect
+[UTCON]   /redoc
+[UTCON]   /v1/account/balance/history/transfer
+[UTCON]   /v1/account/balance/lookup
+[UTCON]   /v1/account/balance/transfer/deposit
+[UTCON]   /v1/admin/account/balance/transfer/deposit/pending
+[UTCON]   /v1/account/balance/transfer/pay
+[UTCON]   /v1/account/balance/transfer/withdraw
+[UTCON]   /v1/admin/account/balance/transfer/withdraw/pending
+[UTCON]   /v1/account/register/request
+[UTCON]   /v1/account/register/status
+[UTCON]   /v1/account/register/queue
+[UTCON]   /v1/account/register/resolve
+[UTCON]   /v1/account/register/fail
+[UTCON]   /v1/account/register
+[UTCON]   /api/v1/market/candles/upsert
+[UTCON]   /api/v1/market/chart/{symbol_code}
+[UTCON]   /api/v1/market/config
+[UTCON]   /api/v1/market/families
+[UTCON]   /api/v1/market/families/{family_code}
+[UTCON]   /api/v1/market/quote/{symbol_code}
+[UTCON]   /api/v1/market/quotes/upsert
+[UTCON]   /api/v1/market/samples/{symbol_code}
+[UTCON]   /api/v1/market/samples/upsert
+[UTCON]   /api/v1/market/symbols/{symbol_code}/composition
+[UTCON]   /api/v1/market/symbols/{symbol_code}/config
+[UTCON]   /api/v1/market/symbols
+[UTCON]   /api/v1/market/symbols/{symbol_code}
+[UTCON]   /api/v1/raw/shops/lookup
+[UTCON]   /v1/raw/shops/record
+[UTCON]   /api/v1/raw/transactions/lookup
+[UTCON]   /v1/raw/transactions/record
+INFO:     Started server process [196077]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     10.1.0.83:45628 - "GET /v1/account/register/queue?status=pending&limit=100 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/config HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/ELYT/config HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/ELYT/composition HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=ELYTRA&limit=5000&order=desc&since_ts=1771009523478 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=ELYTRA&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/ELYT?from_ts=0&to_ts=9999999999999&newest_first=true&limit=1 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/quotes/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/samples/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/ELYT?from_ts=1773558300000&to_ts=1773601523478&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.80:41552 - "GET /v1/account/register/status?discord_uuid=644719741780492298 HTTP/1.1" 200 OK
+INFO:     10.1.0.80:41564 - "POST /v1/account/register/request HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/ELYT?from_ts=1773514800000&to_ts=1773601523478&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/ELYT?from_ts=1772996400000&to_ts=1773601523478&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/ELYT?from_ts=1771776000000&to_ts=1773601523478&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/EMRL/config HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/EMRL/composition HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=EMERALD&limit=5000&order=desc&since_ts=1771009539777 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=EMERALD&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=EMERALD_BLOCK&limit=5000&order=desc&since_ts=1771009539777 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=EMERALD_BLOCK&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/EMRL?from_ts=0&to_ts=9999999999999&newest_first=true&limit=1 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/quotes/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/samples/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/EMRL?from_ts=1773590700000&to_ts=1773601539777&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/EMRL?from_ts=1773558300000&to_ts=1773601539777&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/EMRL?from_ts=1773514800000&to_ts=1773601539777&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/EMRL?from_ts=1772996400000&to_ts=1773601539777&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/EMRL?from_ts=1771776000000&to_ts=1773601539777&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/EMRL?from_ts=1765756800000&to_ts=1773601539777&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/GOLD/config HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/GOLD/composition HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=GOLD_NUGGET&limit=5000&order=desc&since_ts=1771009555370 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=GOLD_NUGGET&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=GOLD_INGOT&limit=5000&order=desc&since_ts=1771009555370 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=GOLD_INGOT&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=GOLD_BLOCK&limit=5000&order=desc&since_ts=1771009555370 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=GOLD_BLOCK&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=RAW_GOLD&limit=5000&order=desc&since_ts=1771009555370 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=RAW_GOLD&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=RAW_GOLD_BLOCK&limit=5000&order=desc&since_ts=1771009555370 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=RAW_GOLD_BLOCK&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GOLD?from_ts=0&to_ts=9999999999999&newest_first=true&limit=1 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/quotes/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/samples/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GOLD?from_ts=1773590700000&to_ts=1773601555370&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GOLD?from_ts=1773558300000&to_ts=1773601555370&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GOLD?from_ts=1773514800000&to_ts=1773601555370&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GOLD?from_ts=1772996400000&to_ts=1773601555370&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GOLD?from_ts=1771776000000&to_ts=1773601555370&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.80:55592 - "GET /v1/account/register/status?discord_uuid=644719741780492298 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GOLD?from_ts=1765756800000&to_ts=1773601555370&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/GPWD/config HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/GPWD/composition HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=GUNPOWDER&limit=5000&order=desc&since_ts=1771009570593 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=GUNPOWDER&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GPWD?from_ts=0&to_ts=9999999999999&newest_first=true&limit=1 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/quotes/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/samples/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GPWD?from_ts=1773558300000&to_ts=1773601570593&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GPWD?from_ts=1773514800000&to_ts=1773601570593&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GPWD?from_ts=1772996400000&to_ts=1773601570593&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/GPWD?from_ts=1771776000000&to_ts=1773601570593&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/IRON/config HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/IRON/composition HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=IRON_NUGGET&limit=5000&order=desc&since_ts=1771009580888 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=IRON_NUGGET&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=IRON_INGOT&limit=5000&order=desc&since_ts=1771009580888 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=IRON_INGOT&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=IRON_BLOCK&limit=5000&order=desc&since_ts=1771009580888 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=IRON_BLOCK&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=RAW_IRON&limit=5000&order=desc&since_ts=1771009580888 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=RAW_IRON&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=RAW_IRON_BLOCK&limit=5000&order=desc&since_ts=1771009580888 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=RAW_IRON_BLOCK&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/IRON?from_ts=0&to_ts=9999999999999&newest_first=true&limit=1 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/quotes/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/samples/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/IRON?from_ts=1773558300000&to_ts=1773601580888&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/IRON?from_ts=1773514800000&to_ts=1773601580888&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/IRON?from_ts=1772996400000&to_ts=1773601580888&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/IRON?from_ts=1771776000000&to_ts=1773601580888&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/IRON?from_ts=1765756800000&to_ts=1773601580888&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/NETH/config HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/symbols/NETH/composition HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=NETHERITE_INGOT&limit=5000&order=desc&since_ts=1771009593358 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=NETHERITE_INGOT&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/transactions/lookup?item_type=NETHERITE_BLOCK&limit=5000&order=desc&since_ts=1771009593358 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/raw/shops/lookup?item_type=NETHERITE_BLOCK&limit=5000 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/NETH?from_ts=0&to_ts=9999999999999&newest_first=true&limit=1 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/quotes/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/samples/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/NETH?from_ts=1773558300000&to_ts=1773601593358&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/NETH?from_ts=1773514800000&to_ts=1773601593358&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/NETH?from_ts=1772996400000&to_ts=1773601593358&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "GET /api/v1/market/samples/NETH?from_ts=1771776000000&to_ts=1773601593358&newest_first=false HTTP/1.1" 200 OK
+INFO:     10.1.0.83:45628 - "POST /api/v1/market/candles/upsert HTTP/1.1" 200 OK
+INFO:     10.1.0.83:32840 - "GET /v1/account/register/queue?status=pending&limit=100 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:50170 - "GET /v1/account/register/queue?status=pending&limit=100 HTTP/1.1" 200 OK
+INFO:     10.1.0.83:57248 - "GET /v1/account/register/queue?status=pending&limit=100 HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [196077]
