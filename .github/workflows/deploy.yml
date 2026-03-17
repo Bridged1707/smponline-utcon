@@ -12,7 +12,7 @@ jobs:
     steps:
       - name: Deploy app
         run: |
-          APP_DIR="/root/git/smponline-utcon"
+          APP_DIR="/git/smponline-utcon"
 
           echo "Navigating to app directory"
           cd "$APP_DIR"
