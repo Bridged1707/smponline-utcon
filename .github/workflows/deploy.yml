@@ -35,6 +35,6 @@ jobs:
           pip install -r requirements.txt
 
           echo "Restarting systemd service"
-          systemctl restart smponline-utcon.service
+          export XDG_RUNTIME_DIR=/run/user/$(id -u) && systemctl --user restart smponline-utcon.service
 
           echo "Deployment completed successfully!"
