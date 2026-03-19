@@ -10,7 +10,7 @@ from utcon.services.market_symbols import build_symbol_composition, resolve_symb
 
 router = APIRouter(prefix="/api/v1/market/cap", tags=["market"])
 
-DEFAULT_STALE_AFTER_SECONDS = 900
+DEFAULT_STALE_AFTER_SECONDS = 86400
 PRICE_SOURCE_PRIORITY = (
     ("mark_price", "mark_price"),
     ("mid_price", "mid_price"),
