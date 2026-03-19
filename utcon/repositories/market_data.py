@@ -413,17 +413,19 @@ async def get_market_cap_snapshot(
             params.append(last_seen_since_ts)
             clauses.append(f"last_seen >= ${len(params)}")
 
+        params.append(float(item.get("quantity_multiplier") or 1.0))
+        multiplier_placeholder = f"${len(params)}"
+
         row = await conn.fetchrow(
             f"""
             SELECT
                 COALESCE(SUM(remaining * item_quantity), 0) AS raw_units,
-                COALESCE(SUM(remaining * item_quantity * ${{len(params) + 1}}), 0) AS known_volume,
+                COALESCE(SUM(remaining * item_quantity * {multiplier_placeholder}), 0) AS known_volume,
                 ARRAY_REMOVE(ARRAY_AGG(DISTINCT shop_id), NULL) AS shop_ids
             FROM shops
             WHERE {' AND '.join(clauses)}
             """,
             *params,
-            float(item.get("quantity_multiplier") or 1.0),
         )
 
         raw_units = float(row["raw_units"] or 0)
