@@ -384,3 +384,57 @@ async def get_last_market_candle_before(
     )
 
     return dict(row) if row else None
+
+async def get_market_cap_snapshot(
+    conn,
+    items: List[Dict[str, Any]],
+    *,
+    last_seen_since_ts: int | None = None,
+) -> Dict[str, Any]:
+    total_known_volume = 0.0
+    total_raw_units = 0.0
+    shop_ids: set[int] = set()
+
+    for item in items:
+        clauses = ["item_type = $1", "remaining > 0"]
+        params: List[Any] = [item["item_type"]]
+
+        snbt = item.get("snbt")
+        item_name = item.get("item_name")
+
+        if snbt not in (None, "", "{}"):
+            params.append(snbt)
+            clauses.append(f"snbt = ${len(params)}")
+        elif item_name:
+            params.append(item_name)
+            clauses.append(f"(item_name = ${len(params)} OR item_name IS NULL)")
+
+        if last_seen_since_ts is not None:
+            params.append(last_seen_since_ts)
+            clauses.append(f"last_seen >= ${len(params)}")
+
+        row = await conn.fetchrow(
+            f"""
+            SELECT
+                COALESCE(SUM(remaining * item_quantity), 0) AS raw_units,
+                COALESCE(SUM(remaining * item_quantity * ${{len(params) + 1}}), 0) AS known_volume,
+                ARRAY_REMOVE(ARRAY_AGG(DISTINCT shop_id), NULL) AS shop_ids
+            FROM shops
+            WHERE {' AND '.join(clauses)}
+            """,
+            *params,
+            float(item.get("quantity_multiplier") or 1.0),
+        )
+
+        raw_units = float(row["raw_units"] or 0)
+        known_volume = float(row["known_volume"] or 0)
+
+        total_raw_units += raw_units
+        total_known_volume += known_volume
+        shop_ids.update(int(shop_id) for shop_id in (row["shop_ids"] or []))
+
+    return {
+        "raw_units": total_raw_units,
+        "known_volume": total_known_volume,
+        "shop_count": len(shop_ids),
+    }
