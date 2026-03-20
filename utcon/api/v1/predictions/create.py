@@ -19,5 +19,5 @@ async def create_prediction(req: PredictionMarketCreateRequest):
             existing = await prediction_repo.get_market(conn, req.code.strip().upper())
             if existing is not None:
                 raise HTTPException(status_code=409, detail="market_already_exists")
-            market = await prediction_repo.create_market(conn, req.model_dump())
+            market = await prediction_repo.create_market(conn, req.dict())
     return {"status": "ok", "market": market}
