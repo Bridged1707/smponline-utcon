@@ -72,7 +72,9 @@ async def ensure_account_schema(conn) -> None:
     )
 
 
-async def create_account(conn, discord_uuid: str, mc_uuid: str, mc_name: str):
+async def create_account(conn, discord_uuid: str, mc_uuid: str, mc_name: str | None = None):
+    resolved_mc_name = mc_name or mc_uuid
+
     await conn.execute(
         """
         INSERT INTO accounts(discord_uuid, mc_uuid, mc_name, verified_at)
@@ -85,7 +87,7 @@ async def create_account(conn, discord_uuid: str, mc_uuid: str, mc_name: str):
         """,
         discord_uuid,
         mc_uuid,
-        mc_name,
+        resolved_mc_name,
     )
 
     await conn.execute(
@@ -96,6 +98,37 @@ async def create_account(conn, discord_uuid: str, mc_uuid: str, mc_name: str):
         """,
         discord_uuid,
     )
+
+async def delete_account(conn, discord_uuid: str) -> bool:
+    account = await conn.fetchrow(
+        """
+        SELECT discord_uuid
+        FROM accounts
+        WHERE discord_uuid = $1
+        """,
+        discord_uuid,
+    )
+
+    if not account:
+        return False
+
+    await conn.execute(
+        """
+        DELETE FROM balances
+        WHERE discord_uuid = $1
+        """,
+        discord_uuid,
+    )
+
+    await conn.execute(
+        """
+        DELETE FROM accounts
+        WHERE discord_uuid = $1
+        """,
+        discord_uuid,
+    )
+
+    return True
 
 
 async def get_account_by_discord_uuid(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
