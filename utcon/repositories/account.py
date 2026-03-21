@@ -368,3 +368,4 @@ def _generate_registration_challenge() -> Dict[str, Any]:
         "item_quantity": random.randint(REGISTER_MIN_VALUE, REGISTER_MAX_VALUE),
         "shop_type": REGISTER_DEFAULT_SHOP_TYPE,
     }
+
