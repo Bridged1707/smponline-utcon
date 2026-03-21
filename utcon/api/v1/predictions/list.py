@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/v1/predictions", tags=["predictions"])
 async def list_predictions(
     status: str | None = None,
     include_closed: bool = False,
-    limit: int = Query(default=25, ge=1, le=250),
+    limit: int = Query(default=25, ge=1, le=500),
 ):
     async with db.connection() as conn:
         items = await prediction_repo.list_markets(
