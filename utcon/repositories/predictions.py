@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from utcon.repositories import account as account_repo
 from utcon.repositories import balance as balance_repo
 
-STATUS_ACTIVE = "active"
+STATUS_ACTIVE = "open"
 STATUS_CLOSED = "closed"
 STATUS_RESOLVED = "resolved"
 STATUS_CANCELLED = "cancelled"
@@ -96,7 +96,7 @@ async def list_markets(
         FROM prediction_markets
         {where_sql}
         ORDER BY
-            CASE WHEN status = 'active' THEN 0 ELSE 1 END,
+            CASE WHEN status = 'open' THEN 0 ELSE 1 END,
             closes_at ASC NULLS LAST,
             created_at DESC,
             code ASC

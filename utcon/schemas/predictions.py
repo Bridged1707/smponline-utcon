@@ -7,7 +7,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
-PredictionStatus = Literal["active", "closed", "resolved", "cancelled"]
+PredictionStatus = Literal["open", "closed", "resolved", "cancelled"]
 PredictionSide = Literal["YES", "NO"]
 PredictionOutcome = Literal["YES", "NO", "CANCELLED"]
 
