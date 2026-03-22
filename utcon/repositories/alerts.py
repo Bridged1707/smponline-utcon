@@ -9,6 +9,10 @@ LOCATION_REQUIRED_TYPES = {
     "SHOP_INVENTORY_UPDATE",
     "SHOP_PRICE_UPDATE",
 }
+EVENT_CURSOR_INITIALIZED_TYPES = {
+    "SHOP_SALE",
+    "AUCTION_SALE",
+}
 
 
 def _row_to_dict(row) -> Optional[Dict[str, Any]]:
@@ -29,10 +33,7 @@ def validate_alert_payload(payload: Dict[str, Any]) -> None:
     target_type = str(payload["target_type"]).strip().upper()
 
     if alert_type in LOCATION_REQUIRED_TYPES:
-        missing = [
-            key for key in ("world", "x", "y", "z")
-            if payload.get(key) is None
-        ]
+        missing = [key for key in ("world", "x", "y", "z") if payload.get(key) is None]
         if missing:
             raise ValueError(f"missing_location_fields:{','.join(missing)}")
 
@@ -84,7 +85,7 @@ async def create_alert(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload["discord_uuid"],
         payload["alert_type"],
         payload["target_type"],
-        payload["target_key"].strip().upper() if payload["target_type"] == "SYMBOL" else payload["target_key"].strip().upper(),
+        payload["target_key"].strip().upper(),
         payload.get("target_name"),
         payload.get("snbt"),
         _hash_snbt(payload.get("snbt")),
@@ -99,7 +100,26 @@ async def create_alert(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload.get("cooldown_seconds", 300),
         payload.get("notes"),
     )
-    return dict(row)
+    alert = dict(row)
+
+    if alert["alert_type"] in EVENT_CURSOR_INITIALIZED_TYPES:
+        await conn.execute(
+            """
+            INSERT INTO alert_match_state (alert_id, state_key, last_event_ts, metadata)
+            VALUES (
+                $1,
+                'cursor',
+                (SELECT COALESCE(MAX(timestamp), 0) FROM transactions),
+                $2::jsonb
+            )
+            ON CONFLICT (alert_id, state_key)
+            DO NOTHING
+            """,
+            alert["id"],
+            json.dumps({"initialized_live_cursor": True}),
+        )
+
+    return alert
 
 
 async def list_alerts(
@@ -138,10 +158,7 @@ async def list_alerts(
 
 
 async def get_alert(conn, alert_id: int) -> Optional[Dict[str, Any]]:
-    row = await conn.fetchrow(
-        "SELECT * FROM user_alerts WHERE id = $1",
-        alert_id,
-    )
+    row = await conn.fetchrow("SELECT * FROM user_alerts WHERE id = $1", alert_id)
     return _row_to_dict(row)
 
 
@@ -160,10 +177,7 @@ async def set_alert_active(conn, alert_id: int, is_active: bool) -> Optional[Dic
 
 
 async def delete_alert(conn, alert_id: int) -> bool:
-    status = await conn.execute(
-        "DELETE FROM user_alerts WHERE id = $1",
-        alert_id,
-    )
+    status = await conn.execute("DELETE FROM user_alerts WHERE id = $1", alert_id)
     return status.endswith("1")
 
 
@@ -260,13 +274,11 @@ async def create_alert_event(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload["dedupe_key"],
         metadata_json,
     )
-
     if row is None:
         row = await conn.fetchrow(
             "SELECT * FROM alert_events WHERE dedupe_key = $1",
             payload["dedupe_key"],
         )
-
     await conn.execute(
         """
         UPDATE user_alerts
