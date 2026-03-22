@@ -5,8 +5,6 @@ from typing import Any, Dict, List, Optional
 
 
 LOCATION_REQUIRED_TYPES = {
-    "NEW_SHOP",
-    "SHOP_SALE",
     "SHOP_INVENTORY_UPDATE",
     "SHOP_PRICE_UPDATE",
 }
