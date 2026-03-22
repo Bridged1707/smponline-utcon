@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any, Dict, List, Optional
 
 
@@ -193,6 +194,8 @@ async def list_states_for_alert(conn, alert_id: int) -> List[Dict[str, Any]]:
 
 
 async def upsert_state(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
+    metadata_json = json.dumps(payload.get("metadata", {}))
+
     row = await conn.fetchrow(
         """
         INSERT INTO alert_match_state (
@@ -223,12 +226,14 @@ async def upsert_state(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload.get("last_seen_price"),
         payload.get("last_seen_remaining"),
         payload.get("last_in_band"),
-        payload.get("metadata", {}),
+        metadata_json,
     )
     return dict(row)
 
 
 async def create_alert_event(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
+    metadata_json = json.dumps(payload.get("metadata", {}))
+
     row = await conn.fetchrow(
         """
         INSERT INTO alert_events (
@@ -253,13 +258,15 @@ async def create_alert_event(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload["body"],
         payload.get("source_key"),
         payload["dedupe_key"],
-        payload.get("metadata", {}),
+        metadata_json,
     )
+
     if row is None:
         row = await conn.fetchrow(
             "SELECT * FROM alert_events WHERE dedupe_key = $1",
             payload["dedupe_key"],
         )
+
     await conn.execute(
         """
         UPDATE user_alerts
