@@ -14,6 +14,10 @@ async def lookup_transactions(
     snbt: Optional[str] = None,
     transaction_type: Optional[str] = None,
     event_type: Optional[str] = None,
+    shop_world: Optional[str] = None,
+    shop_x: Optional[int] = None,
+    shop_y: Optional[int] = None,
+    shop_z: Optional[int] = None,
     since_ts: Optional[int] = None,
     until_ts: Optional[int] = None,
     min_unit_price: Optional[float] = None,
@@ -38,6 +42,14 @@ async def lookup_transactions(
         where_clauses.append(f"transaction_type = {add_param(transaction_type)}")
     if event_type is not None:
         where_clauses.append(f"event = {add_param(event_type)}")
+    if shop_world is not None:
+        where_clauses.append(f"shop_world = {add_param(shop_world)}")
+    if shop_x is not None:
+        where_clauses.append(f"shop_x = {add_param(shop_x)}")
+    if shop_y is not None:
+        where_clauses.append(f"shop_y = {add_param(shop_y)}")
+    if shop_z is not None:
+        where_clauses.append(f"shop_z = {add_param(shop_z)}")
     if since_ts is not None:
         where_clauses.append(f"timestamp >= {add_param(since_ts)}")
     if until_ts is not None:
