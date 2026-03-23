@@ -20,11 +20,7 @@ DEPOSIT_DEFAULT_TTL_MINUTES = 10
 # You can tighten this later.
 # These are the safe challenge items for bot-owned deposit shops.
 DEPOSIT_ALLOWED_ITEM_TYPES = {
-    "DIRT",
-    "COBBLESTONE",
-    "GRAVEL",
-    "NETHERRACK",
-    "SAND",
+    "PAPER",
 }
 
 # This is the actual identity gate.
