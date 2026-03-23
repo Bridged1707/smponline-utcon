@@ -15,8 +15,7 @@ DEPOSIT_STATUS_EXPIRED = "expired"
 DEPOSIT_STATUS_FAILED = "failed"
 DEPOSIT_STATUS_CANCELLED = "cancelled"
 
-DEPOSIT_DEFAULT_TTL_MINUTES = 10
-
+DEPOSIT_DEFAULT_TTL_MINUTES = 30
 
 
 def _utcnow_naive() -> datetime:
@@ -25,63 +24,6 @@ def _utcnow_naive() -> datetime:
 
 def _row_to_dict(row) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
-
-
-async def ensure_deposit_schema(conn) -> None:
-    await conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS deposit_challenge_queue (
-            id BIGSERIAL PRIMARY KEY,
-            discord_uuid TEXT NOT NULL,
-            challenge_shop_id BIGINT NOT NULL,
-            challenge_owner_uuid UUID NOT NULL,
-            challenge_owner_name TEXT NOT NULL,
-            challenge_item_type TEXT NOT NULL,
-            challenge_item_name TEXT,
-            challenge_item_quantity INTEGER NOT NULL,
-            challenge_price NUMERIC NOT NULL,
-            expected_total NUMERIC NOT NULL,
-            challenge_world TEXT NOT NULL,
-            challenge_x INTEGER NOT NULL,
-            challenge_y INTEGER NOT NULL,
-            challenge_z INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            requested_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            expires_at TIMESTAMP NOT NULL,
-            resolved_at TIMESTAMP,
-            matched_transaction_id BIGINT,
-            processed_by TEXT,
-            failure_reason TEXT
-        )
-        """
-    )
-
-    await conn.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_deposit_challenge_queue_pending_discord
-        ON deposit_challenge_queue(discord_uuid)
-        WHERE status = 'pending'
-        """
-    )
-    await conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_deposit_challenge_queue_status_expires
-        ON deposit_challenge_queue(status, expires_at)
-        """
-    )
-    await conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_deposit_challenge_queue_shop_pending
-        ON deposit_challenge_queue(challenge_shop_id, status)
-        """
-    )
-    await conn.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_deposit_challenge_queue_matched_tx
-        ON deposit_challenge_queue(matched_transaction_id)
-        WHERE matched_transaction_id IS NOT NULL
-        """
-    )
 
 
 async def expire_stale_deposit_challenges(conn) -> int:
@@ -204,7 +146,7 @@ async def create_deposit_challenge(conn, discord_uuid: str) -> Dict[str, Any]:
     expires_at = _utcnow_naive() + timedelta(minutes=DEPOSIT_DEFAULT_TTL_MINUTES)
 
     challenge_price = Decimal(str(chosen["price"]))
-    challenge_quantity = int(chosen["item_quantity"])
+    challenge_quantity = int(chosen["item_quantity"] or 1)
     expected_total = challenge_price
 
     row = await conn.fetchrow(
@@ -345,8 +287,8 @@ async def resolve_deposit_match(
 
     tx_currency_amount = Decimal(str(txd.get("currency_amount") or 0))
     expected_total = Decimal(str(queue_item["expected_total"]))
-    if tx_currency_amount != expected_total:
-        raise ValueError("transaction_amount_mismatch")
+    if tx_currency_amount < expected_total:
+        raise ValueError("transaction_amount_too_small")
 
     duplicate = await conn.fetchrow(
         """
@@ -359,12 +301,18 @@ async def resolve_deposit_match(
     if duplicate is not None:
         raise ValueError("transaction_already_consumed")
 
-    await balance_repo.add_balance(conn, queue_item["discord_uuid"], expected_total)
+    current_balance = await balance_repo.get_balance_for_update(conn, queue_item["discord_uuid"])
+    if current_balance is None:
+        raise LookupError("balance_not_found")
+
+    credited_amount = tx_currency_amount
+
+    await balance_repo.add_balance(conn, queue_item["discord_uuid"], credited_amount)
     await balance_repo.insert_balance_transaction(
         conn,
         discord_uuid=queue_item["discord_uuid"],
         kind="deposit",
-        amount=expected_total,
+        amount=credited_amount,
         metadata={
             "queue_id": queue_id,
             "transaction_id": matched_transaction_id,
@@ -376,6 +324,9 @@ async def resolve_deposit_match(
             "item_type": queue_item["challenge_item_type"],
             "challenge_price": str(queue_item["challenge_price"]),
             "expected_total": str(queue_item["expected_total"]),
+            "credited_amount": str(credited_amount),
+            "transaction_quantity": int(txd.get("quantity") or 0),
+            "transaction_total_price": str(txd.get("total_price") or 0),
         },
     )
 
