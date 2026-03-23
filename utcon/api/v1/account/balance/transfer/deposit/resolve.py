@@ -26,9 +26,13 @@ async def resolve_deposit(req: DepositChallengeResolveRequest):
                 )
             except LookupError as exc:
                 detail = str(exc)
-                if detail in {"deposit_queue_item_not_found", "transaction_not_found"}:
+                if detail in {
+                    "deposit_queue_item_not_found",
+                    "transaction_not_found",
+                    "balance_not_found",
+                }:
                     raise HTTPException(status_code=404, detail=detail) from exc
-                raise HTTPException(status_code=404, detail="deposit_not_found") from exc
+                raise HTTPException(status_code=404, detail=detail) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
             except Exception as exc:
@@ -37,7 +41,7 @@ async def resolve_deposit(req: DepositChallengeResolveRequest):
                     req.queue_id,
                     req.matched_transaction_id,
                 )
-                raise HTTPException(status_code=500, detail="deposit_resolve_failed") from exc
+                raise HTTPException(status_code=500, detail=f"deposit_resolve_failed:{type(exc).__name__}") from exc
 
             balance = await balance_repo.get_balance(conn, queue_item["discord_uuid"])
 
