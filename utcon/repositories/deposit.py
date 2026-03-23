@@ -17,18 +17,6 @@ DEPOSIT_STATUS_CANCELLED = "cancelled"
 
 DEPOSIT_DEFAULT_TTL_MINUTES = 10
 
-# You can tighten this later.
-# These are the safe challenge items for bot-owned deposit shops.
-DEPOSIT_ALLOWED_ITEM_TYPES = {
-    "PAPER",
-}
-
-# This is the actual identity gate.
-# Populate this with your Minecraft bot owner UUIDs.
-# If you leave it empty, create_deposit_challenge() will raise.
-DEPOSIT_OWNER_UUID_ALLOWLIST = [
-    "99209726813831168"
-]
 
 
 def _utcnow_naive() -> datetime:
@@ -169,37 +157,32 @@ async def get_deposit_queue_item(conn, queue_id: int, *, for_update: bool = Fals
 
 
 async def list_candidate_deposit_shops(conn) -> List[Dict[str, Any]]:
-    if not DEPOSIT_OWNER_UUID_ALLOWLIST:
-        return []
-
     rows = await conn.fetch(
         """
         SELECT
-            shop_id,
-            owner_uuid,
-            owner_name,
-            world,
-            x,
-            y,
-            z,
-            shop_type,
-            price,
-            remaining,
-            item_type,
-            item_name,
-            item_quantity,
-            snbt,
-            last_seen
-        FROM shops
-        WHERE shop_type = 'SELLING'
-          AND owner_uuid::text = ANY($1::text[])
-          AND item_type = ANY($2::text[])
-          AND remaining > 0
+            s.shop_id,
+            s.owner_uuid,
+            s.owner_name,
+            s.world,
+            s.x,
+            s.y,
+            s.z,
+            s.shop_type,
+            s.price,
+            s.remaining,
+            s.item_type,
+            s.item_name,
+            s.item_quantity,
+            s.snbt,
+            s.last_seen
+        FROM deposit_shops ds
+        JOIN shops s
+          ON s.shop_id = ds.shop_id
+        WHERE ds.is_active = TRUE
+          AND s.shop_type = 'SELLING'
         ORDER BY RANDOM()
         LIMIT 250
-        """,
-        DEPOSIT_OWNER_UUID_ALLOWLIST,
-        list(DEPOSIT_ALLOWED_ITEM_TYPES),
+        """
     )
     return [dict(row) for row in rows]
 
