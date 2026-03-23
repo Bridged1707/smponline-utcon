@@ -13,8 +13,6 @@ router = APIRouter(prefix="/v1/account/balance/transfer/deposit", tags=["balance
 async def fail_deposit(req: DepositChallengeFailRequest):
     async with db.connection() as conn:
         async with conn.transaction():
-            await deposit_repo.ensure_deposit_schema(conn)
-
             queue_item = await deposit_repo.mark_deposit_status(
                 conn,
                 queue_id=req.queue_id,
