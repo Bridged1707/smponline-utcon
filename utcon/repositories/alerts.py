@@ -162,22 +162,36 @@ async def get_alert(conn, alert_id: int) -> Optional[Dict[str, Any]]:
     return _row_to_dict(row)
 
 
-async def set_alert_active(conn, alert_id: int, is_active: bool) -> Optional[Dict[str, Any]]:
+async def alert_belongs_to_discord_uuid(conn, alert_id: int, discord_uuid: str) -> bool:
+    owner = await conn.fetchval(
+        "SELECT 1 FROM user_alerts WHERE id = $1 AND discord_uuid = $2",
+        alert_id,
+        discord_uuid,
+    )
+    return owner is not None
+
+
+async def set_alert_active(conn, alert_id: int, discord_uuid: str, is_active: bool) -> Optional[Dict[str, Any]]:
     row = await conn.fetchrow(
         """
         UPDATE user_alerts
-        SET is_active = $2
-        WHERE id = $1
+        SET is_active = $3
+        WHERE id = $1 AND discord_uuid = $2
         RETURNING *
         """,
         alert_id,
+        discord_uuid,
         is_active,
     )
     return _row_to_dict(row)
 
 
-async def delete_alert(conn, alert_id: int) -> bool:
-    status = await conn.execute("DELETE FROM user_alerts WHERE id = $1", alert_id)
+async def delete_alert(conn, alert_id: int, discord_uuid: str) -> bool:
+    status = await conn.execute(
+        "DELETE FROM user_alerts WHERE id = $1 AND discord_uuid = $2",
+        alert_id,
+        discord_uuid,
+    )
     return status.endswith("1")
 
 

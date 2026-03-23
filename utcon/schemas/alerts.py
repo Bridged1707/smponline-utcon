@@ -37,6 +37,7 @@ class AlertCreateRequest(BaseModel):
 
 
 class AlertToggleRequest(BaseModel):
+    discord_uuid: str = Field(min_length=1, max_length=64)
     is_active: bool
 
 
