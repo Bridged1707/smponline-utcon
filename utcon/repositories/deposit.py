@@ -30,7 +30,9 @@ DEPOSIT_ALLOWED_ITEM_TYPES = {
 # This is the actual identity gate.
 # Populate this with your Minecraft bot owner UUIDs.
 # If you leave it empty, create_deposit_challenge() will raise.
-DEPOSIT_OWNER_UUID_ALLOWLIST: List[str] = []
+DEPOSIT_OWNER_UUID_ALLOWLIST = [
+    "99209726813831168"
+]
 
 
 def _utcnow_naive() -> datetime:

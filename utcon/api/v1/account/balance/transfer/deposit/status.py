@@ -11,10 +11,9 @@ router = APIRouter(prefix="/v1/account/balance/transfer/deposit", tags=["balance
 @router.get("/status")
 async def deposit_status(discord_uuid: str = Query(...)):
     async with db.connection() as conn:
-        await deposit_repo.ensure_deposit_schema(conn)
         await deposit_repo.expire_stale_deposit_challenges(conn)
-
         item = await deposit_repo.get_pending_deposit_for_discord(conn, discord_uuid)
+
         if item is None:
             return {
                 "status": "not_found",

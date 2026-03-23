@@ -16,7 +16,6 @@ log = logging.getLogger(__name__)
 async def request_deposit(req: DepositChallengeCreateRequest):
     async with db.connection() as conn:
         async with conn.transaction():
-            await deposit_repo.ensure_deposit_schema(conn)
             await deposit_repo.expire_stale_deposit_challenges(conn)
 
             try:

@@ -14,7 +14,6 @@ router = APIRouter(
 @router.get("/pending")
 async def pending_deposits(limit: int = Query(default=100, ge=1, le=500)):
     async with db.connection() as conn:
-        await deposit_repo.ensure_deposit_schema(conn)
         await deposit_repo.expire_stale_deposit_challenges(conn)
         rows = await deposit_repo.list_pending_deposit_queue(conn, limit=limit)
 
