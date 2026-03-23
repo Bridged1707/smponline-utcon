@@ -25,6 +25,32 @@ async def request_withdrawal(req: BalanceRequest):
             if balance is None:
                 raise HTTPException(status_code=404, detail="account_not_found")
 
+            existing_queue = await conn.fetchrow(
+                """
+                SELECT id, discord_uuid, amount, status, requested_at, processed_at, processed_by, notes, reason
+                FROM withdraw_queue
+                WHERE discord_uuid = $1
+                  AND status = 'pending'
+                ORDER BY requested_at ASC
+                LIMIT 1
+                """,
+                req.discord_uuid,
+            )
+
+            if existing_queue is not None:
+                queue = dict(existing_queue)
+                queue["amount"] = float(queue["amount"])
+                queue["requested_at"] = queue["requested_at"].isoformat() if queue["requested_at"] else None
+                queue["processed_at"] = queue["processed_at"].isoformat() if queue["processed_at"] else None
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "withdraw_already_pending",
+                        "message": "A withdrawal is already pending for this account.",
+                        "queue": queue,
+                    },
+                )
+
             if balance < amount:
                 raise HTTPException(status_code=400, detail="insufficient_balance")
 
