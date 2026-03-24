@@ -13,6 +13,12 @@ EVENT_CURSOR_INITIALIZED_TYPES = {
     "SHOP_SALE",
     "AUCTION_SALE",
 }
+OWNER_COMPATIBLE_ALERT_TYPES = {
+    "NEW_SHOP",
+    "SHOP_SALE",
+    "SHOP_INVENTORY_UPDATE",
+    "SHOP_PRICE_UPDATE",
+}
 
 
 def _row_to_dict(row) -> Optional[Dict[str, Any]]:
@@ -29,8 +35,23 @@ def _hash_snbt(snbt: Optional[str]) -> Optional[str]:
 
 
 def validate_alert_payload(payload: Dict[str, Any]) -> None:
-    alert_type = str(payload["alert_type"]).strip().upper()
-    target_type = str(payload["target_type"]).strip().upper()
+    payload["alert_type"] = str(payload["alert_type"]).strip().upper()
+    payload["target_type"] = str(payload["target_type"]).strip().upper()
+
+    alert_type = payload["alert_type"]
+    target_type = payload["target_type"]
+
+    raw_target_key = str(payload["target_key"]).strip()
+    if not raw_target_key:
+        raise ValueError("target_key_required")
+
+    if target_type == "OWNER":
+        payload["target_key"] = raw_target_key
+    else:
+        payload["target_key"] = raw_target_key.upper()
+
+    if target_type not in {"ITEM", "SYMBOL", "OWNER"}:
+        raise ValueError("invalid_target_type")
 
     if alert_type in LOCATION_REQUIRED_TYPES:
         missing = [key for key in ("world", "x", "y", "z") if payload.get(key) is None]
@@ -38,8 +59,19 @@ def validate_alert_payload(payload: Dict[str, Any]) -> None:
             raise ValueError(f"missing_location_fields:{','.join(missing)}")
 
     if alert_type == "SYMBOL_PRICE":
+        if target_type != "SYMBOL":
+            raise ValueError("symbol_price_requires_symbol_target")
         if payload.get("min_threshold") is None and payload.get("max_threshold") is None:
             raise ValueError("symbol_price_requires_min_or_max_threshold")
+
+    if target_type == "OWNER":
+        if alert_type not in OWNER_COMPATIBLE_ALERT_TYPES:
+            raise ValueError("owner_target_not_supported_for_alert_type")
+        if payload.get("snbt"):
+            raise ValueError("owner_target_cannot_use_snbt")
+
+    if target_type == "SYMBOL" and alert_type != "SYMBOL_PRICE":
+        raise ValueError("symbol_target_only_supported_for_symbol_price")
 
     if payload.get("min_threshold") is not None and payload.get("max_threshold") is not None:
         if float(payload["min_threshold"]) > float(payload["max_threshold"]):
@@ -48,9 +80,6 @@ def validate_alert_payload(payload: Dict[str, Any]) -> None:
     if payload.get("stock_minimum") is not None and payload.get("stock_maximum") is not None:
         if int(payload["stock_minimum"]) > int(payload["stock_maximum"]):
             raise ValueError("stock_minimum_must_be_lte_stock_maximum")
-
-    if target_type not in {"ITEM", "SYMBOL"}:
-        raise ValueError("invalid_target_type")
 
 
 async def create_alert(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -85,7 +114,7 @@ async def create_alert(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload["discord_uuid"],
         payload["alert_type"],
         payload["target_type"],
-        payload["target_key"].strip().upper(),
+        payload["target_key"],
         payload.get("target_name"),
         payload.get("snbt"),
         _hash_snbt(payload.get("snbt")),
@@ -244,7 +273,8 @@ async def upsert_state(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
             last_seen_price = EXCLUDED.last_seen_price,
             last_seen_remaining = EXCLUDED.last_seen_remaining,
             last_in_band = EXCLUDED.last_in_band,
-            metadata = EXCLUDED.metadata
+            metadata = EXCLUDED.metadata,
+            updated_at = NOW()
         RETURNING *
         """,
         payload["alert_id"],
@@ -259,9 +289,8 @@ async def upsert_state(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
     return dict(row)
 
 
-async def create_alert_event(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
+async def create_event(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
     metadata_json = json.dumps(payload.get("metadata", {}))
-
     row = await conn.fetchrow(
         """
         INSERT INTO alert_events (
@@ -276,7 +305,8 @@ async def create_alert_event(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
         )
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
         ON CONFLICT (dedupe_key)
-        DO NOTHING
+        DO UPDATE SET
+            metadata = EXCLUDED.metadata
         RETURNING *
         """,
         payload["alert_id"],
@@ -288,23 +318,10 @@ async def create_alert_event(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload["dedupe_key"],
         metadata_json,
     )
-    if row is None:
-        row = await conn.fetchrow(
-            "SELECT * FROM alert_events WHERE dedupe_key = $1",
-            payload["dedupe_key"],
-        )
-    await conn.execute(
-        """
-        UPDATE user_alerts
-        SET last_triggered_at = NOW()
-        WHERE id = $1
-        """,
-        payload["alert_id"],
-    )
     return dict(row)
 
 
-async def list_pending_events(conn, *, limit: int = 100) -> List[Dict[str, Any]]:
+async def list_pending_events(conn, *, limit: int = 50) -> List[Dict[str, Any]]:
     rows = await conn.fetch(
         """
         SELECT *
@@ -322,11 +339,8 @@ async def mark_event_delivered(conn, event_id: int) -> Optional[Dict[str, Any]]:
     row = await conn.fetchrow(
         """
         UPDATE alert_events
-        SET
-            delivery_status = 'delivered',
-            delivery_attempts = delivery_attempts + 1,
-            delivered_at = NOW(),
-            last_delivery_error = NULL
+        SET delivery_status = 'delivered',
+            delivered_at = NOW()
         WHERE id = $1
         RETURNING *
         """,
@@ -335,12 +349,11 @@ async def mark_event_delivered(conn, event_id: int) -> Optional[Dict[str, Any]]:
     return _row_to_dict(row)
 
 
-async def mark_event_failed(conn, event_id: int, error: Optional[str]) -> Optional[Dict[str, Any]]:
+async def mark_event_failed(conn, event_id: int, error: str) -> Optional[Dict[str, Any]]:
     row = await conn.fetchrow(
         """
         UPDATE alert_events
-        SET
-            delivery_status = 'failed',
+        SET delivery_status = 'failed',
             delivery_attempts = delivery_attempts + 1,
             last_delivery_error = $2
         WHERE id = $1
