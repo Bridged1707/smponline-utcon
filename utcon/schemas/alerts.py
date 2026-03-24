@@ -14,7 +14,7 @@ AlertType = Literal[
     "SYMBOL_PRICE",
 ]
 
-TargetType = Literal["ITEM", "SYMBOL"]
+TargetType = Literal["ITEM", "SYMBOL", "OWNER"]
 
 
 class AlertCreateRequest(BaseModel):
