@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 MembershipTier = Literal["free", "pro", "garry"]
@@ -26,3 +26,18 @@ class MembershipUpsertRequest(BaseModel):
     duration_days: int = Field(default=7, ge=1, le=3650)
     reason: Optional[str] = None
     replace_active: bool = True
+
+
+class MembershipPurchaseRequest(BaseModel):
+    discord_uuid: str
+    tier: Literal["pro", "garry"]
+    weeks: Optional[int] = Field(default=None, ge=1, le=520)
+    amount: Optional[int] = Field(default=None, ge=1, le=1000000000)
+
+    @model_validator(mode="after")
+    def validate_amount_or_weeks(self):
+        if self.weeks is None and self.amount is None:
+            raise ValueError("either weeks or amount must be provided")
+        if self.weeks is not None and self.amount is not None:
+            raise ValueError("provide either weeks or amount, not both")
+        return self

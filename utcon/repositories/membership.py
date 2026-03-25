@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Any, Dict, Optional
 
 ALL_TIERS = {"free", "pro", "garry"}
+PAID_TIERS = {"pro", "garry"}
+MEMBERSHIP_PRICES = {
+    "pro": 7,
+    "garry": 14,
+}
 
 
 async def get_membership_row(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
@@ -157,6 +163,137 @@ async def upsert_membership(
     )
     await _insert_history(conn, discord_uuid, current.get("tier") if current else None, tier, reason)
     return dict(row)
+
+
+async def purchase_membership(
+    conn,
+    *,
+    discord_uuid: str,
+    tier: str,
+    weeks: int | None,
+    amount: int | None,
+) -> Dict[str, Any]:
+    from utcon.repositories import account as account_repo
+
+    if tier not in PAID_TIERS:
+        raise ValueError("only paid memberships can be purchased")
+
+    account = await account_repo.get_account_by_discord_uuid(conn, discord_uuid)
+    if not account:
+        raise LookupError("account not found")
+
+    price_per_week = MEMBERSHIP_PRICES[tier]
+
+    if weeks is None and amount is None:
+        raise ValueError("either weeks or amount must be provided")
+    if weeks is not None and amount is not None:
+        raise ValueError("provide either weeks or amount, not both")
+
+    if amount is not None:
+        if amount % price_per_week != 0:
+            raise ValueError(f"{tier} membership costs {price_per_week} diamonds per week")
+        purchase_weeks = amount // price_per_week
+        total_cost = amount
+    else:
+        purchase_weeks = weeks or 0
+        total_cost = purchase_weeks * price_per_week
+
+    if purchase_weeks <= 0:
+        raise ValueError("purchase weeks must be greater than zero")
+
+    await expire_memberships(conn)
+    current = await get_membership_row(conn, discord_uuid)
+
+    if current and current.get("is_active") and current.get("tier") in PAID_TIERS and current.get("tier") != tier:
+        raise ValueError(
+            f"you already have an active {current['tier']} membership; cross-tier paid switching is blocked"
+        )
+
+    balance_row = await conn.fetchrow(
+        """
+        SELECT balance
+        FROM balances
+        WHERE discord_uuid = $1
+        FOR UPDATE
+        """,
+        discord_uuid,
+    )
+    if balance_row is None:
+        raise LookupError("balance not found")
+
+    current_balance = Decimal(balance_row["balance"])
+    total_cost_decimal = Decimal(total_cost)
+
+    if current_balance < total_cost_decimal:
+        raise ValueError(
+            f"insufficient balance: need {total_cost} diamonds, have {int(current_balance)}"
+        )
+
+    new_balance_row = await conn.fetchrow(
+        """
+        UPDATE balances
+        SET balance = balance - $2,
+            last_updated = NOW()
+        WHERE discord_uuid = $1
+        RETURNING balance, last_updated
+        """,
+        discord_uuid,
+        total_cost_decimal,
+    )
+
+    membership_row = await upsert_membership(
+        conn,
+        discord_uuid=discord_uuid,
+        tier=tier,
+        duration_days=purchase_weeks * 7,
+        reason=f"membership purchase: {tier} x {purchase_weeks} week(s) for {total_cost} diamonds",
+        replace_active=False,
+    )
+
+    await conn.execute(
+        """
+        INSERT INTO balance_transactions(discord_uuid, kind, amount, metadata)
+        VALUES($1, 'membership_purchase', $2, $3::jsonb)
+        """,
+        discord_uuid,
+        total_cost_decimal,
+        (
+            "{"
+            f"\"tier\": \"{tier}\", "
+            f"\"weeks\": {purchase_weeks}, "
+            f"\"diamonds_spent\": {total_cost}"
+            "}"
+        ),
+    )
+
+    await _insert_history(
+        conn,
+        discord_uuid,
+        current.get("tier") if current else None,
+        tier,
+        f"purchase: {purchase_weeks} week(s), {total_cost} diamonds",
+    )
+
+    return {
+        "discord_uuid": discord_uuid,
+        "tier": tier,
+        "weeks": purchase_weeks,
+        "diamonds_spent": total_cost,
+        "price_per_week": price_per_week,
+        "membership": {
+            "id": membership_row["id"],
+            "tier": membership_row["tier"],
+            "starts_at": membership_row["starts_at"],
+            "expires_at": membership_row["expires_at"],
+            "is_active": membership_row["is_active"],
+            "updated_at": membership_row["updated_at"],
+        },
+        "balance": {
+            "before": int(current_balance),
+            "after": int(Decimal(new_balance_row["balance"])),
+            "last_updated": new_balance_row["last_updated"],
+        },
+    }
 
 
 async def _insert_history(conn, discord_uuid: str, old_tier: str | None, new_tier: str | None, reason: str | None) -> None:
