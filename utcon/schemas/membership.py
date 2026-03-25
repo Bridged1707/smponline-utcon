@@ -44,3 +44,15 @@ class MembershipPurchaseRequest(BaseModel):
             raise ValueError("provide either weeks or amount, not both")
 
         return values
+
+
+class MembershipAdminGrantRequest(BaseModel):
+    discord_uuid: str
+    tier: MembershipTier
+    duration_days: int = Field(default=7, ge=1, le=3650)
+    reason: Optional[str] = None
+
+
+class MembershipAdminRemoveRequest(BaseModel):
+    discord_uuid: str
+    reason: Optional[str] = None

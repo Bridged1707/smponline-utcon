@@ -266,14 +266,6 @@ async def purchase_membership(
         ),
     )
 
-    await _insert_history(
-        conn,
-        discord_uuid,
-        current.get("tier") if current else None,
-        tier,
-        f"purchase: {purchase_weeks} week(s), {total_cost} diamonds",
-    )
-
     return {
         "discord_uuid": discord_uuid,
         "tier": tier,
@@ -293,6 +285,108 @@ async def purchase_membership(
             "after": int(Decimal(new_balance_row["balance"])),
             "last_updated": new_balance_row["last_updated"],
         },
+    }
+
+
+async def admin_grant_membership(
+    conn,
+    *,
+    discord_uuid: str,
+    tier: str,
+    duration_days: int,
+    reason: str | None = None,
+) -> Dict[str, Any]:
+    from utcon.repositories import account as account_repo
+
+    if tier not in ALL_TIERS:
+        raise ValueError("invalid membership tier")
+
+    account = await account_repo.get_account_by_discord_uuid(conn, discord_uuid)
+    if not account:
+        raise LookupError("account not found")
+
+    final_reason = reason or f"admin grant: {tier}"
+
+    if tier == "free":
+        row = await upsert_membership(
+            conn,
+            discord_uuid=discord_uuid,
+            tier="free",
+            duration_days=duration_days,
+            reason=final_reason,
+            replace_active=True,
+        )
+    else:
+        row = await upsert_membership(
+            conn,
+            discord_uuid=discord_uuid,
+            tier=tier,
+            duration_days=duration_days,
+            reason=final_reason,
+            replace_active=True,
+        )
+
+    effective = await get_effective_membership(conn, discord_uuid)
+    return {
+        "discord_uuid": discord_uuid,
+        "action": "grant",
+        "requested_tier": tier,
+        "membership": row,
+        "effective": effective,
+    }
+
+
+async def admin_remove_membership(
+    conn,
+    *,
+    discord_uuid: str,
+    reason: str | None = None,
+) -> Dict[str, Any]:
+    from utcon.repositories import account as account_repo
+
+    account = await account_repo.get_account_by_discord_uuid(conn, discord_uuid)
+    if not account:
+        raise LookupError("account not found")
+
+    current = await get_membership_row(conn, discord_uuid)
+
+    if current is None:
+        effective = await get_effective_membership(conn, discord_uuid)
+        return {
+            "discord_uuid": discord_uuid,
+            "action": "remove",
+            "removed": False,
+            "membership": None,
+            "effective": effective,
+        }
+
+    row = await conn.fetchrow(
+        """
+        UPDATE memberships
+        SET is_active = FALSE,
+            expires_at = NOW(),
+            updated_at = NOW()
+        WHERE discord_uuid = $1
+        RETURNING id, discord_uuid, tier, starts_at, expires_at, is_active, created_at, updated_at
+        """,
+        discord_uuid,
+    )
+
+    await _insert_history(
+        conn,
+        discord_uuid,
+        current.get("tier"),
+        "free",
+        reason or "admin removal of paid membership",
+    )
+
+    effective = await get_effective_membership(conn, discord_uuid)
+    return {
+        "discord_uuid": discord_uuid,
+        "action": "remove",
+        "removed": True,
+        "membership": dict(row) if row else None,
+        "effective": effective,
     }
 
 
