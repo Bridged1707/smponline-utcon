@@ -107,7 +107,8 @@ async def lookup_shops(
             item_quantity,
             snbt,
             last_seen,
-            is_enabled
+            is_enabled,
+            notes
         FROM shops
         {where_sql}
         ORDER BY {order_column} {order.upper()}, shop_id {order.upper()}

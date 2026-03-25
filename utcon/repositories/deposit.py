@@ -121,6 +121,7 @@ async def list_candidate_deposit_shops(conn) -> List[Dict[str, Any]]:
         JOIN shops s
           ON s.shop_id = ds.shop_id
         WHERE ds.is_active = TRUE
+          AND s.is_enabled = TRUE
           AND s.shop_type = 'SELLING'
         ORDER BY RANDOM()
         LIMIT 250
