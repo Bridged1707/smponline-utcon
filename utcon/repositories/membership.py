@@ -3,53 +3,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-PAID_TIERS = {"pro", "garry"}
 ALL_TIERS = {"free", "pro", "garry"}
 
 
-async def ensure_membership_schema(conn) -> None:
-    await conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS memberships (
-            id BIGSERIAL PRIMARY KEY,
-            discord_uuid TEXT NOT NULL UNIQUE,
-            tier TEXT NOT NULL,
-            starts_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            expires_at TIMESTAMP,
-            is_active BOOLEAN NOT NULL DEFAULT TRUE,
-            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            CONSTRAINT memberships_tier_chk CHECK (tier IN ('free', 'pro', 'garry')),
-            CONSTRAINT memberships_expiry_chk CHECK (
-                (tier = 'free' AND expires_at IS NULL)
-                OR
-                (tier IN ('pro', 'garry') AND expires_at IS NOT NULL)
-            )
-        )
-        """
-    )
-    await conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS membership_history (
-            id BIGSERIAL PRIMARY KEY,
-            discord_uuid TEXT NOT NULL,
-            old_tier TEXT,
-            new_tier TEXT,
-            changed_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            reason TEXT
-        )
-        """
-    )
-    await conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_membership_history_discord_uuid
-        ON membership_history(discord_uuid, changed_at DESC)
-        """
-    )
-
-
 async def get_membership_row(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
-    await ensure_membership_schema(conn)
     await expire_memberships(conn)
     row = await conn.fetchrow(
         """
@@ -64,7 +21,6 @@ async def get_membership_row(conn, discord_uuid: str) -> Optional[Dict[str, Any]
 
 
 async def expire_memberships(conn) -> int:
-    await ensure_membership_schema(conn)
     result = await conn.execute(
         """
         UPDATE memberships
@@ -81,7 +37,6 @@ async def expire_memberships(conn) -> int:
 async def get_effective_membership(conn, discord_uuid: str) -> Dict[str, Any]:
     from utcon.repositories import account as account_repo
 
-    await ensure_membership_schema(conn)
     await expire_memberships(conn)
 
     account = await account_repo.get_account_by_discord_uuid(conn, discord_uuid)
@@ -134,8 +89,6 @@ async def upsert_membership(
     replace_active: bool = True,
 ) -> Dict[str, Any]:
     from utcon.repositories import account as account_repo
-
-    await ensure_membership_schema(conn)
 
     if tier not in ALL_TIERS:
         raise ValueError("invalid membership tier")

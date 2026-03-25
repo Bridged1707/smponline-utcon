@@ -22,59 +22,7 @@ REGISTER_STATUS_FAILED = "failed"
 REGISTER_STATUS_CANCELLED = "cancelled"
 
 
-async def ensure_account_schema(conn) -> None:
-    await conn.execute(
-        """
-        ALTER TABLE accounts
-        ADD COLUMN IF NOT EXISTS verified_at TIMESTAMP
-        """
-    )
-
-    await conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS account_register_queue (
-            id BIGSERIAL PRIMARY KEY,
-            discord_uuid TEXT NOT NULL,
-            challenge_item_type TEXT NOT NULL,
-            challenge_item_name TEXT,
-            challenge_price NUMERIC NOT NULL,
-            challenge_item_quantity INTEGER NOT NULL,
-            challenge_shop_type TEXT NOT NULL DEFAULT 'SELLING',
-            status TEXT NOT NULL DEFAULT 'pending',
-            requested_at TIMESTAMP NOT NULL DEFAULT NOW(),
-            expires_at TIMESTAMP NOT NULL,
-            matched_shop_id BIGINT,
-            matched_owner_uuid UUID,
-            matched_owner_name TEXT,
-            resolved_at TIMESTAMP,
-            failure_reason TEXT,
-            attempt_count INTEGER NOT NULL DEFAULT 0
-        )
-        """
-    )
-    await conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_account_register_queue_status
-        ON account_register_queue(status)
-        """
-    )
-    await conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_account_register_queue_discord_uuid
-        ON account_register_queue(discord_uuid)
-        """
-    )
-    await conn.execute(
-        """
-        CREATE INDEX IF NOT EXISTS idx_account_register_queue_match
-        ON account_register_queue(status, challenge_item_type, challenge_price, challenge_item_quantity)
-        """
-    )
-
-
 async def create_account(conn, discord_uuid: str, mc_uuid: str, mc_name: str | None = None):
-    await ensure_account_schema(conn)
-
     resolved_mc_name = mc_name or mc_uuid
 
     await conn.execute(
@@ -103,8 +51,6 @@ async def create_account(conn, discord_uuid: str, mc_uuid: str, mc_name: str | N
 
 
 async def delete_account(conn, discord_uuid: str) -> bool:
-    await ensure_account_schema(conn)
-
     account = await conn.fetchrow(
         """
         SELECT discord_uuid
@@ -137,8 +83,6 @@ async def delete_account(conn, discord_uuid: str) -> bool:
 
 
 async def get_account_by_discord_uuid(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
-    await ensure_account_schema(conn)
-
     row = await conn.fetchrow(
         """
         SELECT id, discord_uuid, mc_uuid, mc_name, created_at, verified_at, roles, rates
@@ -151,8 +95,6 @@ async def get_account_by_discord_uuid(conn, discord_uuid: str) -> Optional[Dict[
 
 
 async def get_account_by_mc_uuid(conn, mc_uuid: str) -> Optional[Dict[str, Any]]:
-    await ensure_account_schema(conn)
-
     row = await conn.fetchrow(
         """
         SELECT id, discord_uuid, mc_uuid, mc_name, created_at, verified_at, roles, rates
@@ -165,8 +107,6 @@ async def get_account_by_mc_uuid(conn, mc_uuid: str) -> Optional[Dict[str, Any]]
 
 
 async def get_pending_registration_for_discord(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
-    await ensure_account_schema(conn)
-
     row = await conn.fetchrow(
         """
         SELECT *
@@ -183,8 +123,6 @@ async def get_pending_registration_for_discord(conn, discord_uuid: str) -> Optio
 
 
 async def get_registration_queue_item(conn, queue_id: int) -> Optional[Dict[str, Any]]:
-    await ensure_account_schema(conn)
-
     row = await conn.fetchrow(
         "SELECT * FROM account_register_queue WHERE id = $1",
         queue_id,
@@ -193,8 +131,6 @@ async def get_registration_queue_item(conn, queue_id: int) -> Optional[Dict[str,
 
 
 async def list_pending_registration_queue(conn, limit: int = 100) -> List[Dict[str, Any]]:
-    await ensure_account_schema(conn)
-
     rows = await conn.fetch(
         """
         SELECT *
@@ -210,8 +146,6 @@ async def list_pending_registration_queue(conn, limit: int = 100) -> List[Dict[s
 
 
 async def expire_stale_registrations(conn) -> int:
-    await ensure_account_schema(conn)
-
     result = await conn.execute(
         """
         UPDATE account_register_queue
@@ -232,8 +166,6 @@ async def create_registration_challenge(
     discord_uuid: str,
     ttl_minutes: int = REGISTER_DEFAULT_TTL_MINUTES,
 ) -> Dict[str, Any]:
-    await ensure_account_schema(conn)
-
     existing = await get_pending_registration_for_discord(conn, discord_uuid)
     if existing is not None:
         return existing
@@ -282,8 +214,6 @@ async def mark_registration_matched(
     mc_uuid: str,
     mc_name: str | None = None,
 ) -> Dict[str, Any]:
-    await ensure_account_schema(conn)
-
     queue_item = await get_registration_queue_item(conn, queue_id)
     if queue_item is None:
         raise LookupError("registration queue item not found")
@@ -314,8 +244,6 @@ async def mark_registration_matched(
 
 
 async def mark_registration_failed(conn, queue_id: int, reason: str) -> Dict[str, Any]:
-    await ensure_account_schema(conn)
-
     row = await conn.fetchrow(
         """
         UPDATE account_register_queue
@@ -335,8 +263,6 @@ async def mark_registration_failed(conn, queue_id: int, reason: str) -> Dict[str
 
 
 async def increment_registration_attempt_count(conn, queue_id: int) -> Dict[str, Any]:
-    await ensure_account_schema(conn)
-
     row = await conn.fetchrow(
         """
         UPDATE account_register_queue
@@ -352,7 +278,6 @@ async def increment_registration_attempt_count(conn, queue_id: int) -> Dict[str,
 
 
 async def get_registration_status(conn, discord_uuid: str) -> Dict[str, Any]:
-    await ensure_account_schema(conn)
     await expire_stale_registrations(conn)
 
     account = await get_account_by_discord_uuid(conn, discord_uuid)
