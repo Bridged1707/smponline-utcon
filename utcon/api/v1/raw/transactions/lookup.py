@@ -25,6 +25,7 @@ async def lookup_transactions(
     include_disabled: bool = False,
     limit: int = Query(default=100, ge=1, le=5000),
     order: Literal["asc", "desc"] = "desc",
+    nbt_wildcard: Optional[str] = Query(None),
 ):
     where_clauses = []
     params = []
@@ -41,6 +42,8 @@ async def lookup_transactions(
         where_clauses.append(f"item_name = {add_param(item_name)}")
     if snbt is not None:
         where_clauses.append(f"snbt = {add_param(snbt)}")
+    if nbt_wildcard is not None:
+        where_clauses.append(f"snbt LIKE {add_param(nbt_wildcard)}")
     if transaction_type is not None:
         where_clauses.append(f"transaction_type = {add_param(transaction_type)}")
     if event_type is not None:
