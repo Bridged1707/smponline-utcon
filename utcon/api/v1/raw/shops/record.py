@@ -30,10 +30,11 @@ async def record_shops(shops: List[Dict[str, Any]]):
                         item_name,
                         item_quantity,
                         snbt,
-                        last_seen
+                        last_seen,
+                        is_enabled
                     )
                     VALUES(
-                        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15
+                        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
                     )
                     ON CONFLICT (shop_id)
                     DO UPDATE SET
@@ -67,6 +68,7 @@ async def record_shops(shops: List[Dict[str, Any]]):
                     shop.get("item_quantity"),
                     shop.get("snbt"),
                     shop.get("last_seen"),
+                    shop.get("is_enabled", True),
                 )
 
     return {"status": "ok", "count": len(shops)}

@@ -22,6 +22,7 @@ async def lookup_transactions(
     until_ts: Optional[int] = None,
     min_unit_price: Optional[float] = None,
     max_unit_price: Optional[float] = None,
+    include_disabled: bool = False,
     limit: int = Query(default=100, ge=1, le=5000),
     order: Literal["asc", "desc"] = "desc",
 ):
@@ -32,6 +33,8 @@ async def lookup_transactions(
         params.append(value)
         return f"${len(params)}"
 
+    if not include_disabled:
+        where_clauses.append("is_enabled = TRUE")
     if item_type is not None:
         where_clauses.append(f"item_type = {add_param(item_type)}")
     if item_name is not None:
@@ -79,7 +82,8 @@ async def lookup_transactions(
             shop_y,
             shop_z,
             shop_world,
-            transaction_type
+            transaction_type,
+            is_enabled
         FROM transactions
         {where_sql}
         ORDER BY timestamp {order.upper()}, id {order.upper()}

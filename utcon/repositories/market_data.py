@@ -396,7 +396,7 @@ async def get_market_cap_snapshot(
     shop_ids: set[int] = set()
 
     for item in items:
-        clauses = ["item_type = $1", "remaining > 0"]
+        clauses = ["item_type = $1", "remaining > 0", "is_enabled = TRUE"]
         params: List[Any] = [item["item_type"]]
 
         snbt = item.get("snbt")

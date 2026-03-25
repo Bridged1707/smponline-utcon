@@ -138,7 +138,7 @@ async def create_alert(conn, payload: Dict[str, Any]) -> Dict[str, Any]:
             VALUES (
                 $1,
                 'cursor',
-                (SELECT COALESCE(MAX(timestamp), 0) FROM transactions),
+                (SELECT COALESCE(MAX(timestamp), 0) FROM transactions WHERE is_enabled = TRUE),
                 $2::jsonb
             )
             ON CONFLICT (alert_id, state_key)

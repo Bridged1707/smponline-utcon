@@ -33,13 +33,14 @@ async def record_transactions(events: List[Dict[str, Any]]):
                         shop_y,
                         shop_z,
                         shop_world,
-                        transaction_type
+                        transaction_type,
+                        is_enabled
                     )
                     VALUES(
                         $1,$2,$3,$4,
                         $5,$6,$7,$8,
                         $9,$10,$11,
-                        $12,$13,$14,$15,$16
+                        $12,$13,$14,$15,$16,$17
                     )
                     ON CONFLICT (hash) DO NOTHING
                     """,
@@ -59,6 +60,7 @@ async def record_transactions(events: List[Dict[str, Any]]):
                     event.get("shop_z"),
                     event.get("shop_world"),
                     event.get("transaction_type"),
+                    event.get("is_enabled", True),
                 )
 
     return {"status": "ok", "count": len(events)}

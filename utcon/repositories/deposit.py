@@ -256,6 +256,7 @@ async def resolve_deposit_match(
             transaction_type
         FROM transactions
         WHERE id = $1
+          AND is_enabled = TRUE
         FOR UPDATE
         """,
         matched_transaction_id,

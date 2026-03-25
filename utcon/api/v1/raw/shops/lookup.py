@@ -19,6 +19,7 @@ async def lookup_shops(
     y: Optional[int] = None,
     z: Optional[int] = None,
     active_only: bool = False,
+    include_disabled: bool = False,
     last_seen_since_ts: Optional[int] = None,
     exact_price: Optional[float] = None,
     min_price: Optional[float] = None,
@@ -37,6 +38,8 @@ async def lookup_shops(
         params.append(value)
         return f"${len(params)}"
 
+    if not include_disabled:
+        where_clauses.append("is_enabled = TRUE")
     if query is not None:
         normalized_query = query.strip()
         normalized_item_type = normalized_query.upper().replace(" ", "_")
@@ -103,7 +106,8 @@ async def lookup_shops(
             item_name,
             item_quantity,
             snbt,
-            last_seen
+            last_seen,
+            is_enabled
         FROM shops
         {where_sql}
         ORDER BY {order_column} {order.upper()}, shop_id {order.upper()}
