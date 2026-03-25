@@ -9,6 +9,7 @@ router = APIRouter(prefix="/api/v1/raw/transactions", tags=["raw"])
 
 @router.get("/lookup")
 async def lookup_transactions(
+    query: Optional[str] = None,
     item_type: Optional[str] = None,
     item_name: Optional[str] = None,
     snbt: Optional[str] = None,
@@ -36,14 +37,26 @@ async def lookup_transactions(
 
     if not include_disabled:
         where_clauses.append("is_enabled = TRUE")
+
+    if query is not None:
+        normalized_query = query.strip()
+        normalized_item_type = normalized_query.upper().replace(" ", "_")
+        like_value = f"%{normalized_query}%"
+        where_clauses.append(
+            f"(item_type = {add_param(normalized_item_type)} OR item_name ILIKE {add_param(like_value)})"
+        )
+
     if item_type is not None:
         where_clauses.append(f"item_type = {add_param(item_type)}")
     if item_name is not None:
         where_clauses.append(f"item_name = {add_param(item_name)}")
     if snbt is not None:
         where_clauses.append(f"snbt = {add_param(snbt)}")
-    if nbt_wildcard is not None:
-        where_clauses.append(f"snbt LIKE {add_param(nbt_wildcard)}")
+
+    if nbt_wildcard is not None and nbt_wildcard.strip():
+        wildcard_value = f"%{nbt_wildcard.strip()}%"
+        where_clauses.append(f"snbt ILIKE {add_param(wildcard_value)}")
+
     if transaction_type is not None:
         where_clauses.append(f"transaction_type = {add_param(transaction_type)}")
     if event_type is not None:
@@ -67,7 +80,7 @@ async def lookup_transactions(
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
-    query = f"""
+    sql = f"""
         SELECT
             id,
             hash,
@@ -94,7 +107,7 @@ async def lookup_transactions(
     """
 
     async with db.connection() as conn:
-        rows = await conn.fetch(query, *params)
+        rows = await conn.fetch(sql, *params)
 
     return {
         "items": [dict(row) for row in rows],
