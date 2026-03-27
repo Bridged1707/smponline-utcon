@@ -287,6 +287,59 @@ async def get_history(
     return [dict(row) for row in rows]
 
 
+async def list_user_wagers(
+    conn,
+    *,
+    discord_uuid: str,
+    unsettled_only: bool = True,
+    limit: int = 25,
+) -> List[Dict[str, Any]]:
+    where = ["w.discord_uuid = $1"]
+    params: List[Any] = [discord_uuid]
+
+    if unsettled_only:
+        where.append("w.settled_at IS NULL")
+
+    params.append(limit)
+    rows = await conn.fetch(
+        f"""
+        SELECT
+            w.id,
+            w.market_code,
+            w.discord_uuid,
+            w.side,
+            w.amount,
+            w.price_yes_before,
+            w.price_yes_after,
+            w.payout_amount,
+            w.gross_payout_amount,
+            w.profit_amount,
+            w.fee_amount,
+            w.outcome,
+            w.membership_tier_at_wager,
+            w.fee_rate_bps_at_wager,
+            w.created_at,
+            w.settled_at,
+            m.title AS market_title,
+            m.status AS market_status,
+            m.outcome AS market_outcome,
+            m.closes_at,
+            m.resolves_at
+        FROM prediction_wagers w
+        JOIN prediction_markets m
+          ON m.code = w.market_code
+        WHERE {' AND '.join(where)}
+        ORDER BY
+            CASE WHEN w.settled_at IS NULL THEN 0 ELSE 1 END,
+            w.created_at DESC,
+            w.id DESC
+        LIMIT ${len(params)}
+        """,
+        *params,
+    )
+    return [_normalize_wager_row(dict(row)) for row in rows]
+
+
 async def get_recent_wagers(conn, market_code: str, *, limit: int = 20) -> List[Dict[str, Any]]:
     rows = await conn.fetch(
         """
