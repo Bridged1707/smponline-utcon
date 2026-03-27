@@ -708,6 +708,50 @@ async def resolve_market(
     }
 
 
+async def close_market(
+    conn,
+    *,
+    market_code: str,
+    closed_by: Optional[str] = None,
+    close_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    market = await get_market(conn, market_code, for_update=True)
+    if market is None:
+        raise LookupError("market_not_found")
+    if market["status"] == STATUS_RESOLVED:
+        raise ValueError("market_already_resolved")
+    if market["status"] == STATUS_CANCELLED:
+        raise ValueError("market_already_cancelled")
+    if market["status"] == STATUS_CLOSED:
+        raise ValueError("market_already_closed")
+
+    row = await conn.fetchrow(
+        """
+        UPDATE prediction_markets
+        SET status = $2,
+            updated_at = NOW(),
+            resolution_notes = CASE
+                WHEN COALESCE($3, '') = '' THEN resolution_notes
+                WHEN resolution_notes IS NULL OR resolution_notes = '' THEN $3
+                ELSE resolution_notes || E'
+' || $3
+            END
+        WHERE code = $1
+        RETURNING *
+        """,
+        market_code,
+        STATUS_CLOSED,
+        close_reason,
+    )
+    updated_market = _normalize_market_row(dict(row))
+    snapshot = await insert_snapshot(conn, updated_market)
+    return {
+        "market": updated_market,
+        "snapshot": snapshot,
+        "closed_by": closed_by,
+    }
+
+
 async def cancel_market(
     conn,
     *,
