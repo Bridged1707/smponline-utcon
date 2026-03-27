@@ -37,3 +37,7 @@ class PredictionResolveRequest(BaseModel):
 class PredictionCancelRequest(BaseModel):
     cancelled_by: Optional[str] = None
     reason: Optional[str] = None
+
+
+class PredictionNotificationFailureRequest(BaseModel):
+    error: Optional[str] = None
