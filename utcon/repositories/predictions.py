@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, ROUND_FLOOR
 from typing import Any, Dict, List, Optional
 
 from utcon.repositories import account as account_repo
@@ -47,6 +47,11 @@ def _to_decimal(value: Any) -> Decimal:
 
 def _quantize(value: Decimal) -> Decimal:
     return value.quantize(DISPLAY_QUANT, rounding=ROUND_DOWN)
+
+
+def _whole_diamond_payout(value: Decimal, *, minimum: Decimal = ZERO) -> Decimal:
+    floored = value.to_integral_value(rounding=ROUND_FLOOR)
+    return floored if floored >= minimum else minimum
 
 
 def _normalize_market_row(market: Dict[str, Any]) -> Dict[str, Any]:
@@ -620,10 +625,10 @@ async def resolve_market(
                 payout = amount
                 fee = gross_payout - payout
 
-            payout = _quantize(payout)
             gross_payout = _quantize(gross_payout)
             profit = _quantize(profit)
             fee = _quantize(fee)
+            payout = _whole_diamond_payout(payout, minimum=amount)
 
             await balance_repo.get_balance_for_update(conn, wager["discord_uuid"])
             await balance_repo.add_balance(conn, wager["discord_uuid"], payout)
