@@ -748,8 +748,7 @@ async def close_market(
             resolution_notes = CASE
                 WHEN COALESCE($3, '') = '' THEN resolution_notes
                 WHEN resolution_notes IS NULL OR resolution_notes = '' THEN $3
-                ELSE resolution_notes || E'
-' || $3
+                ELSE resolution_notes || E'\n' || $3
             END
         WHERE code = $1
         RETURNING *
