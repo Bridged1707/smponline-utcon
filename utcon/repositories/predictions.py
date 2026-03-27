@@ -102,6 +102,7 @@ async def list_markets(
 ) -> List[Dict[str, Any]]:
     where = []
     params: List[Any] = []
+    restrict_to_bettable_open_markets = False
 
     def add(value: Any) -> str:
         params.append(value)
@@ -109,8 +110,13 @@ async def list_markets(
 
     if status:
         where.append(f"status = {add(status)}")
+        restrict_to_bettable_open_markets = status == STATUS_ACTIVE
     elif not include_closed:
         where.append(f"status = {add(STATUS_ACTIVE)}")
+        restrict_to_bettable_open_markets = True
+
+    if restrict_to_bettable_open_markets:
+        where.append(f"(closes_at IS NULL OR closes_at > {add(_utcnow_naive())})")
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     params.append(limit)
@@ -569,6 +575,10 @@ async def resolve_market(
 
     if outcome == OUTCOME_CANCELLED:
         return await cancel_market(conn, market_code=market_code, cancelled_by=resolved_by, reason=resolution_notes)
+
+    closes_at = market.get("closes_at")
+    if closes_at is not None and closes_at > _utcnow_naive():
+        raise ValueError("market_still_open_for_betting")
 
     winning_side = outcome
     winning_pool_key = "yes_pool" if winning_side == SIDE_YES else "no_pool"
