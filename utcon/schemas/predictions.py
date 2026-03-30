@@ -28,12 +28,25 @@ class PredictionMarketOption(BaseModel):
     is_resolved_winner: bool
     implied_price: Decimal = Decimal("0")
     pool_amount: Decimal = Decimal("0")
+    trade_volume: Decimal = Decimal("0")
+    wager_count: int = 0
+    numeric_value: Optional[Decimal] = None
+    range_min: Optional[Decimal] = None
+    range_max: Optional[Decimal] = None
+    range_min_inclusive: bool = True
+    range_max_inclusive: bool = False
 
 
 class PredictionMarketCreateOption(BaseModel):
     option_code: str
     label: str
     sort_order: int = 0
+    description: Optional[str] = None
+    numeric_value: Optional[Decimal] = None
+    range_min: Optional[Decimal] = None
+    range_max: Optional[Decimal] = None
+    range_min_inclusive: bool = True
+    range_max_inclusive: bool = False
 
 
 class PredictionMarketCreateRequest(BaseModel):

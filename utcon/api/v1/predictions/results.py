@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from utcon import db
-from utcon.repositories import predictions as prediction_repo
+from utcon.repositories import predictions as repo
 
 router = APIRouter(prefix="/api/v1/predictions", tags=["predictions"])
 
@@ -23,14 +23,12 @@ async def resolve_prediction_by_numeric_result(
     market_code: str,
     req: PredictionNumericResultRequest,
 ):
-    normalized_market_code = market_code.strip().upper()
-
     async with db.connection() as conn:
         async with conn.transaction():
             try:
-                payload = await prediction_repo.resolve_market_by_numeric_result(
+                payload = await repo.resolve_market_by_numeric_result(
                     conn,
-                    market_code=normalized_market_code,
+                    market_code=market_code.strip().upper(),
                     numeric_value=req.numeric_value,
                     resolved_by=req.resolved_by,
                     resolution_notes=req.resolution_notes,
@@ -40,7 +38,4 @@ async def resolve_prediction_by_numeric_result(
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return {
-        "status": "ok",
-        **payload,
-    }
+    return {"status": "ok", **payload}
