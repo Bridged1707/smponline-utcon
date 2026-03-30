@@ -207,7 +207,6 @@ async def build_market_payload(conn, market_code: str) -> dict[str, Any]:
     total_volume = await _market_total_volume_from_options(conn, market_code)
     recent_wagers = [_serialize_recent_wager(row) for row in await get_recent_wagers(conn, market_code)]
 
-    # legacy compatibility fields for older callers
     yes_opt = next((opt for opt in options if opt["option_code"] == "YES"), None)
     no_opt = next((opt for opt in options if opt["option_code"] == "NO"), None)
 
@@ -347,7 +346,6 @@ async def create_market(conn, req) -> dict[str, Any]:
             type("Opt", (), {"option_code": "NO", "label": "NO", "sort_order": 20, "description": None, "numeric_value": None, "range_min": None, "range_max": None, "range_min_inclusive": True, "range_max_inclusive": False})(),
         ]
 
-    inserted_option_ids: list[int] = []
     option_count = len(option_models)
     initial_price = (ONE / Decimal(option_count)).quantize(Decimal("0.00000001"), rounding=ROUND_HALF_UP) if option_count > 0 else ZERO
 
@@ -385,7 +383,6 @@ async def create_market(conn, req) -> dict[str, Any]:
             getattr(opt, "range_max_inclusive", False),
         )
         option_id = int(row["id"])
-        inserted_option_ids.append(option_id)
 
         await conn.execute(
             """
@@ -457,6 +454,12 @@ async def _recompute_option_state_prices(conn, market_code: str) -> None:
 
 
 async def _insert_option_snapshot_rows(conn, market_code: str) -> None:
+    option_rows = await get_market_options(conn, market_code)
+    yes_opt = next((opt for opt in option_rows if opt["option_code"] == "YES"), None)
+    no_opt = next((opt for opt in option_rows if opt["option_code"] == "NO"), None)
+    total_volume = sum((_to_decimal(row["pool_amount"]) for row in option_rows), ZERO)
+    snapshot_ts = await conn.fetchval("SELECT (EXTRACT(EPOCH FROM now()) * 1000)::bigint")
+
     snapshot_id = await conn.fetchval(
         """
         INSERT INTO prediction_market_snapshots (
@@ -468,18 +471,16 @@ async def _insert_option_snapshot_rows(conn, market_code: str) -> None:
             price_yes,
             price_no
         )
-        VALUES (
-            $1,
-            (EXTRACT(EPOCH FROM now()) * 1000)::bigint,
-            0,
-            0,
-            COALESCE((SELECT SUM(pool_amount) FROM prediction_option_state WHERE market_code = $1), 0),
-            0,
-            0
-        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
         RETURNING id
         """,
         market_code,
+        snapshot_ts,
+        _to_decimal(yes_opt["pool_amount"]) if yes_opt else ZERO,
+        _to_decimal(no_opt["pool_amount"]) if no_opt else ZERO,
+        total_volume,
+        _to_decimal(yes_opt["implied_price"]) if yes_opt else ZERO,
+        _to_decimal(no_opt["implied_price"]) if no_opt else ZERO,
     )
 
     await conn.execute(
@@ -499,16 +500,17 @@ async def _insert_option_snapshot_rows(conn, market_code: str) -> None:
             $1,
             s.market_code,
             s.option_id,
-            (EXTRACT(EPOCH FROM now()) * 1000)::bigint,
+            $2,
             s.pool_amount,
             s.implied_price,
             s.trade_volume,
             s.wager_count,
             now()
         FROM prediction_option_state s
-        WHERE s.market_code = $2
+        WHERE s.market_code = $3
         """,
         snapshot_id,
+        snapshot_ts,
         market_code,
     )
 
@@ -633,23 +635,33 @@ async def place_wager(conn, req) -> dict[str, Any]:
     )
     price_after = _to_decimal(price_after)
 
+    # Legacy schema compatibility:
+    # prediction_wagers.side, price_yes_before, price_yes_after are still NOT NULL.
+    # For non-binary markets we store the chosen option code in side and mirror the
+    # selected option's before/after prices into the legacy yes fields so inserts succeed.
     await conn.execute(
         """
         INSERT INTO prediction_wagers (
             market_code,
             discord_uuid,
+            side,
             option_id,
             amount,
+            price_yes_before,
+            price_yes_after,
             price_before,
             price_after,
             shares_received
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         """,
         market_code,
         req.discord_uuid,
+        option_code,
         option["id"],
         amount,
+        price_before,
+        price_after,
         price_before,
         price_after,
         shares_received,
@@ -811,17 +823,11 @@ async def resolve_market_by_numeric_result(
 
         if option["range_min"] is not None:
             lower = _to_decimal(option["range_min"])
-            if option["range_min_inclusive"]:
-                lower_ok = numeric_value >= lower
-            else:
-                lower_ok = numeric_value > lower
+            lower_ok = numeric_value >= lower if option["range_min_inclusive"] else numeric_value > lower
 
         if option["range_max"] is not None:
             upper = _to_decimal(option["range_max"])
-            if option["range_max_inclusive"]:
-                upper_ok = numeric_value <= upper
-            else:
-                upper_ok = numeric_value < upper
+            upper_ok = numeric_value <= upper if option["range_max_inclusive"] else numeric_value < upper
 
         if lower_ok and upper_ok and (option["range_min"] is not None or option["range_max"] is not None):
             winner = option
@@ -866,7 +872,7 @@ async def list_user_wagers(conn, discord_uuid: str, unsettled_only: bool = True,
                 "option_id": row["option_id"],
                 "option_code": row["option_code"],
                 "option_label": row["option_label"],
-                "side": row["option_code"],  # legacy compatibility
+                "side": row["option_code"],
                 "amount": _to_decimal(row["amount"]),
                 "price_before": _to_decimal(row["price_before"]),
                 "price_after": _to_decimal(row["price_after"]),
@@ -937,6 +943,4 @@ async def get_market_history(conn, market_code: str):
 
 
 async def list_pending_settlements(conn, limit: int = 100):
-    # Placeholder so the router imports cleanly.
-    # Your old settlements flow can be rebuilt later around option_id-based payouts.
     return []
