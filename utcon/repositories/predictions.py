@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -18,6 +19,57 @@ def _to_decimal(value: Any, default: Decimal = ZERO) -> Decimal:
 def _normalize_status_for_filter(status: str | None, include_closed: bool) -> tuple[str | None, bool]:
     normalized = (status or "").strip().lower() or None
     return normalized, include_closed
+
+
+def _coerce_market_close_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+async def _close_expired_market_if_needed(conn, market) -> Any:
+    if market is None:
+        return None
+
+    market_status = str(market["status"] or "").strip().lower()
+    if market_status != "open":
+        return market
+
+    closes_at = _coerce_market_close_datetime(market["closes_at"])
+    if closes_at is None:
+        return market
+
+    now_utc = datetime.now(timezone.utc)
+    if now_utc < closes_at:
+        return market
+
+    await conn.execute(
+        """
+        UPDATE prediction_markets
+        SET status = 'closed',
+            updated_at = now()
+        WHERE code = $1
+          AND status = 'open'
+        """,
+        market["code"],
+    )
+
+    return await get_market(conn, market["code"])
 
 
 async def get_market(conn, market_code: str):
@@ -527,8 +579,10 @@ async def place_wager(conn, req) -> dict[str, Any]:
     if market is None:
         raise LookupError("market_not_found")
 
-    if str(market["status"]).lower() != "open":
-        raise ValueError("market_not_active")
+    market = await _close_expired_market_if_needed(conn, market)
+
+    if str(market["status"] or "").strip().lower() != "open":
+        raise ValueError("betting_closed")
 
     option = await conn.fetchrow(
         """
