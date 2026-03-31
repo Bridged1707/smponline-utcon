@@ -3,11 +3,78 @@ from __future__ import annotations
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
+from utcon.repositories import membership as membership_repo
+
 
 ZERO = Decimal("0")
 ONE = Decimal("1")
 DEFAULT_BINARY_PRICE = Decimal("0.5")
 
+PREDICTION_FEE_RATE_BPS_BY_TIER = {
+    "free": 1000,
+    "pro": 700,
+    "garry": 300,
+}
+BPS_DENOMINATOR = Decimal("10000")
+PAYOUT_QUANTIZE = Decimal("0.00000001")
+
+
+def _normalize_tier(value: Any) -> str:
+    tier = str(value or "").strip().lower()
+    if tier in PREDICTION_FEE_RATE_BPS_BY_TIER:
+        return tier
+    return "free"
+
+
+def _get_prediction_fee_rate_bps_for_tier(tier: Any) -> int:
+    return int(PREDICTION_FEE_RATE_BPS_BY_TIER.get(_normalize_tier(tier), PREDICTION_FEE_RATE_BPS_BY_TIER["free"]))
+
+
+async def _get_prediction_fee_profile(conn, discord_uuid: str) -> tuple[str, int]:
+    membership = await membership_repo.get_effective_membership(conn, discord_uuid)
+    tier = _normalize_tier((membership or {}).get("tier"))
+    return tier, _get_prediction_fee_rate_bps_for_tier(tier)
+
+
+def _quantize_payout(value: Decimal) -> Decimal:
+    return _to_decimal(value).quantize(PAYOUT_QUANTIZE, rounding=ROUND_HALF_UP)
+
+
+def _calculate_prediction_fee_breakdown(
+    *,
+    amount: Decimal,
+    gross_payout_amount: Decimal,
+    fee_rate_bps: int,
+    cancelled: bool = False,
+) -> tuple[Decimal, Decimal, Decimal]:
+    amount = _to_decimal(amount)
+    gross_payout_amount = _to_decimal(gross_payout_amount)
+
+    if cancelled:
+        gross_payout_amount = amount
+        return gross_payout_amount, ZERO, amount
+
+    if gross_payout_amount <= ZERO:
+        return ZERO, ZERO, ZERO
+
+    gross_profit_amount = gross_payout_amount - amount
+    if gross_profit_amount <= ZERO:
+        return gross_payout_amount, ZERO, gross_payout_amount
+
+    fee_amount = _quantize_payout(gross_profit_amount * Decimal(int(fee_rate_bps)) / BPS_DENOMINATOR)
+    if fee_amount < ZERO:
+        fee_amount = ZERO
+    if fee_amount > gross_profit_amount:
+        fee_amount = gross_profit_amount
+
+    net_payout_amount = gross_payout_amount - fee_amount
+    if net_payout_amount < ZERO:
+        net_payout_amount = ZERO
+
+    return gross_payout_amount, fee_amount, net_payout_amount
+
+
+ZERO
 
 def _to_decimal(value: Any, default: Decimal = ZERO) -> Decimal:
     if value is None:
@@ -560,6 +627,8 @@ async def place_wager(conn, req) -> dict[str, Any]:
     if _to_decimal(balance["balance"]) < amount:
         raise ValueError("insufficient_balance")
 
+    membership_tier_at_wager, fee_rate_bps_at_wager = await _get_prediction_fee_profile(conn, req.discord_uuid)
+
     price_before = _to_decimal(option["implied_price"])
     if price_before <= ZERO:
         option_count = await conn.fetchval(
@@ -651,9 +720,11 @@ async def place_wager(conn, req) -> dict[str, Any]:
             price_yes_after,
             price_before,
             price_after,
-            shares_received
+            shares_received,
+            membership_tier_at_wager,
+            fee_rate_bps_at_wager
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         """,
         market_code,
         req.discord_uuid,
@@ -665,6 +736,8 @@ async def place_wager(conn, req) -> dict[str, Any]:
         price_before,
         price_after,
         shares_received,
+        membership_tier_at_wager,
+        fee_rate_bps_at_wager,
     )
 
     await conn.execute(
@@ -982,6 +1055,8 @@ async def list_pending_settlements(conn, limit: int = 100):
             pw.price_before,
             pw.price_after,
             pw.shares_received,
+            pw.membership_tier_at_wager,
+            pw.fee_rate_bps_at_wager,
             pw.created_at,
             pm.status AS market_status,
             pm.outcome AS market_outcome,
@@ -1097,20 +1172,30 @@ async def process_pending_settlements(conn, market_code: str | None = None, limi
         net_payout_amount = ZERO
         outcome = "LOSS"
         balance_kind = None
+        membership_tier_at_wager = _normalize_tier(row["membership_tier_at_wager"])
+        fee_rate_bps_at_wager = int(row["fee_rate_bps_at_wager"] or _get_prediction_fee_rate_bps_for_tier(membership_tier_at_wager))
 
         if market_status == "cancelled":
             outcome = "CANCELLED"
-            gross_payout_amount = amount
-            net_payout_amount = amount
+            gross_payout_amount, fee_amount, net_payout_amount = _calculate_prediction_fee_breakdown(
+                amount=amount,
+                gross_payout_amount=amount,
+                fee_rate_bps=fee_rate_bps_at_wager,
+                cancelled=True,
+            )
             balance_kind = "prediction_refund"
         elif winning_option_id is not None and wager_option_id == winning_option_id:
             outcome = "WIN"
-            gross_payout_amount = shares_received if shares_received > ZERO else amount
-            net_payout_amount = gross_payout_amount - fee_amount
+            gross_payout_seed = shares_received if shares_received > ZERO else amount
+            gross_payout_amount, fee_amount, net_payout_amount = _calculate_prediction_fee_breakdown(
+                amount=amount,
+                gross_payout_amount=gross_payout_seed,
+                fee_rate_bps=fee_rate_bps_at_wager,
+                cancelled=False,
+            )
             balance_kind = "prediction_payout"
 
         profit_amount = net_payout_amount - amount if outcome != "CANCELLED" else ZERO
-
         if net_payout_amount > ZERO:
             await conn.execute(
                 """
@@ -1146,6 +1231,11 @@ async def process_pending_settlements(conn, market_code: str | None = None, limi
                         "winning_option_label": row["winning_option_label"],
                         "market_outcome": row["market_outcome"],
                         "processed_by": processed_by or "utmp",
+                        "membership_tier_at_wager": membership_tier_at_wager,
+                        "fee_rate_bps_at_wager": fee_rate_bps_at_wager,
+                        "gross_payout_amount": str(gross_payout_amount),
+                        "fee_amount": str(fee_amount),
+                        "net_payout_amount": str(net_payout_amount),
                     }
                 ),
             )
@@ -1187,6 +1277,8 @@ async def process_pending_settlements(conn, market_code: str | None = None, limi
                 "option_label": row["option_label"],
                 "amount": amount,
                 "shares_received": shares_received,
+                "membership_tier_at_wager": membership_tier_at_wager,
+                "fee_rate_bps_at_wager": fee_rate_bps_at_wager,
                 "gross_payout_amount": gross_payout_amount,
                 "net_payout_amount": net_payout_amount,
                 "fee_amount": fee_amount,
@@ -1211,6 +1303,8 @@ async def list_pending_notifications(conn, limit: int = 100):
             pw.payout_amount,
             pw.fee_amount,
             pw.profit_amount,
+            pw.membership_tier_at_wager,
+            pw.fee_rate_bps_at_wager,
             pw.outcome,
             pw.created_at,
             pw.settled_at,
@@ -1261,6 +1355,8 @@ async def list_pending_notifications(conn, limit: int = 100):
                 "net_payout_amount": _to_decimal(row["payout_amount"]),
                 "fee_amount": _to_decimal(row["fee_amount"]),
                 "profit_amount": _to_decimal(row["profit_amount"]),
+                "membership_tier_at_wager": _normalize_tier(row["membership_tier_at_wager"]),
+                "fee_rate_bps_at_wager": int(row["fee_rate_bps_at_wager"] or 0),
                 "outcome": row["outcome"],
                 "created_at": row["created_at"],
                 "settled_at": row["settled_at"],
