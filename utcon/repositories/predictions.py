@@ -1170,6 +1170,8 @@ async def process_pending_settlements(conn, market_code: str | None = None, limi
             pw.price_before,
             pw.price_after,
             pw.shares_received,
+            pw.membership_tier_at_wager,
+            pw.fee_rate_bps_at_wager,
             pw.created_at,
             pm.status AS market_status,
             pm.outcome AS market_outcome,
