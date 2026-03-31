@@ -65,3 +65,14 @@ class AlertEventCreateRequest(BaseModel):
 
 class AlertEventDeliveryResultRequest(BaseModel):
     error: Optional[str] = None
+
+class AlertUpdateRequest(BaseModel):
+    discord_uuid: str = Field(min_length=1, max_length=64)
+    target_key: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    target_name: Optional[str] = None
+    min_threshold: Optional[float] = None
+    max_threshold: Optional[float] = None
+    stock_minimum: Optional[int] = None
+    stock_maximum: Optional[int] = None
+    cooldown_seconds: Optional[int] = Field(default=None, ge=0)
+    notes: Optional[str] = None

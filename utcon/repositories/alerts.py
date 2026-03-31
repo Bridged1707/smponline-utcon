@@ -363,3 +363,48 @@ async def mark_event_failed(conn, event_id: int, error: str) -> Optional[Dict[st
         error,
     )
     return _row_to_dict(row)
+
+async def update_alert(conn, alert_id: int, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    current = await get_alert(conn, alert_id)
+    if current is None:
+        return None
+
+    merged = {**current, **{k: v for k, v in payload.items() if k != "discord_uuid" and v is not None}}
+    if payload.get("target_key") is not None:
+        raw_target_key = str(payload["target_key"]).strip()
+        if not raw_target_key:
+            raise ValueError("target_key_required")
+        merged["target_key"] = raw_target_key if str(current.get("target_type") or "").upper() == "OWNER" else raw_target_key.upper()
+
+    if payload.get("notes") is None and "notes" in payload:
+        merged["notes"] = None
+
+    validate_alert_payload(merged)
+
+    row = await conn.fetchrow(
+        """
+        UPDATE user_alerts
+        SET target_key = $3,
+            target_name = $4,
+            min_threshold = $5,
+            max_threshold = $6,
+            stock_minimum = $7,
+            stock_maximum = $8,
+            cooldown_seconds = $9,
+            notes = $10,
+            updated_at = NOW()
+        WHERE id = $1 AND discord_uuid = $2
+        RETURNING *
+        """,
+        alert_id,
+        payload["discord_uuid"],
+        merged.get("target_key"),
+        merged.get("target_name"),
+        merged.get("min_threshold"),
+        merged.get("max_threshold"),
+        merged.get("stock_minimum"),
+        merged.get("stock_maximum"),
+        merged.get("cooldown_seconds", 300),
+        merged.get("notes"),
+    )
+    return _row_to_dict(row)
