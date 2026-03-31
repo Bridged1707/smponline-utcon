@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -81,6 +82,52 @@ def _to_decimal(value: Any, default: Decimal = ZERO) -> Decimal:
         return default
     return Decimal(str(value))
 
+def _parse_market_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        raw = str(value).strip()
+        if not raw:
+            return None
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+async def _close_expired_markets(conn, market_code: str | None = None) -> None:
+    if market_code:
+        await conn.execute(
+            """
+            UPDATE prediction_markets
+            SET status = 'closed',
+                updated_at = now()
+            WHERE code = $1
+              AND status = 'open'
+              AND closes_at IS NOT NULL
+              AND closes_at <= now()
+            """,
+            market_code,
+        )
+        return
+
+    await conn.execute(
+        """
+        UPDATE prediction_markets
+        SET status = 'closed',
+            updated_at = now()
+        WHERE status = 'open'
+          AND closes_at IS NOT NULL
+          AND closes_at <= now()
+        """
+    )
+
+
 
 def _normalize_status_for_filter(status: str | None, include_closed: bool) -> tuple[str | None, bool]:
     normalized = (status or "").strip().lower() or None
@@ -88,6 +135,7 @@ def _normalize_status_for_filter(status: str | None, include_closed: bool) -> tu
 
 
 async def get_market(conn, market_code: str):
+    await _close_expired_markets(conn, market_code)
     return await conn.fetchrow(
         """
         SELECT *
@@ -310,6 +358,7 @@ async def build_market_payload(conn, market_code: str) -> dict[str, Any]:
 
 async def list_markets(conn, status: str | None = None, include_closed: bool = False, limit: int = 25):
     status, include_closed = _normalize_status_for_filter(status, include_closed)
+    await _close_expired_markets(conn)
 
     if include_closed:
         if status:
@@ -594,8 +643,14 @@ async def place_wager(conn, req) -> dict[str, Any]:
     if market is None:
         raise LookupError("market_not_found")
 
-    if str(market["status"]).lower() != "open":
+    market_status = str(market["status"] or "").strip().lower()
+    if market_status != "open":
         raise ValueError("market_not_active")
+
+    closes_at = _parse_market_datetime(market.get("closes_at"))
+    if closes_at is not None and closes_at <= datetime.now(timezone.utc):
+        await _close_expired_markets(conn, market_code)
+        raise ValueError("market_closed")
 
     option = await conn.fetchrow(
         """
