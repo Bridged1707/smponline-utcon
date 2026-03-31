@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -18,6 +19,7 @@ PREDICTION_FEE_RATE_BPS_BY_TIER = {
 }
 BPS_DENOMINATOR = Decimal("10000")
 PAYOUT_QUANTIZE = Decimal("0.00000001")
+MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 def _normalize_tier(value: Any) -> str:
@@ -82,60 +84,61 @@ def _to_decimal(value: Any, default: Decimal = ZERO) -> Decimal:
         return default
     return Decimal(str(value))
 
-def _parse_market_datetime(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        dt = value
-    else:
-        raw = str(value).strip()
-        if not raw:
-            return None
-        try:
-            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
-async def _close_expired_markets(conn, market_code: str | None = None) -> None:
-    if market_code:
-        await conn.execute(
-            """
-            UPDATE prediction_markets
-            SET status = 'closed',
-                updated_at = now()
-            WHERE code = $1
-              AND status = 'open'
-              AND closes_at IS NOT NULL
-              AND closes_at <= now()
-            """,
-            market_code,
-        )
-        return
-
-    await conn.execute(
-        """
-        UPDATE prediction_markets
-        SET status = 'closed',
-            updated_at = now()
-        WHERE status = 'open'
-          AND closes_at IS NOT NULL
-          AND closes_at <= now()
-        """
-    )
-
-
 
 def _normalize_status_for_filter(status: str | None, include_closed: bool) -> tuple[str | None, bool]:
     normalized = (status or "").strip().lower() or None
     return normalized, include_closed
 
 
+
+
+def _market_local_now() -> datetime:
+    return datetime.now(MARKET_TIMEZONE).replace(tzinfo=None)
+
+
+def _coerce_naive_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    return None
+
+
+async def _close_expired_market_if_needed(conn, market) -> Any:
+    if market is None:
+        return None
+
+    status = str(market["status"] or "").strip().lower()
+    closes_at = _coerce_naive_datetime(market["closes_at"])
+    if status != "open" or closes_at is None or closes_at > _market_local_now():
+        return market
+
+    await conn.execute(
+        """
+        UPDATE prediction_markets
+        SET status = 'closed',
+            updated_at = now()
+        WHERE code = $1
+          AND status = 'open'
+        """,
+        market["code"],
+    )
+    return await get_market(conn, market["code"])
+
 async def get_market(conn, market_code: str):
-    await _close_expired_markets(conn, market_code)
     return await conn.fetchrow(
         """
         SELECT *
@@ -314,6 +317,7 @@ def _serialize_recent_wager(row) -> dict[str, Any]:
 
 async def build_market_payload(conn, market_code: str) -> dict[str, Any]:
     market = await get_market(conn, market_code)
+    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
@@ -358,49 +362,29 @@ async def build_market_payload(conn, market_code: str) -> dict[str, Any]:
 
 async def list_markets(conn, status: str | None = None, include_closed: bool = False, limit: int = 25):
     status, include_closed = _normalize_status_for_filter(status, include_closed)
-    await _close_expired_markets(conn)
 
-    if include_closed:
-        if status:
-            rows = await conn.fetch(
-                """
-                SELECT code
-                FROM prediction_markets
-                WHERE status = $1
-                ORDER BY created_at DESC, code ASC
-                LIMIT $2
-                """,
-                status,
-                limit,
-            )
-        else:
-            rows = await conn.fetch(
-                """
-                SELECT code
-                FROM prediction_markets
-                ORDER BY created_at DESC, code ASC
-                LIMIT $1
-                """,
-                limit,
-            )
-    else:
-        effective_status = status or "open"
-        rows = await conn.fetch(
-            """
-            SELECT code
-            FROM prediction_markets
-            WHERE status = $1
-            ORDER BY created_at DESC, code ASC
-            LIMIT $2
-            """,
-            effective_status,
-            limit,
-        )
+    rows = await conn.fetch(
+        """
+        SELECT code
+        FROM prediction_markets
+        ORDER BY created_at DESC, code ASC
+        LIMIT $1
+        """,
+        max(limit * 3, limit),
+    )
 
     items: list[dict[str, Any]] = []
+    effective_status = status or ("open" if not include_closed else None)
+
     for row in rows:
         payload = await build_market_payload(conn, row["code"])
         market = payload["market"]
+
+        if effective_status and str(market["status"] or "").strip().lower() != effective_status:
+            continue
+        if not include_closed and effective_status is None and str(market["status"] or "").strip().lower() != "open":
+            continue
+
         items.append(
             {
                 "code": market["code"],
@@ -421,8 +405,10 @@ async def list_markets(conn, status: str | None = None, include_closed: bool = F
                 "options": payload["options"],
             }
         )
-    return items
+        if len(items) >= limit:
+            break
 
+    return items
 
 async def create_market(conn, req) -> dict[str, Any]:
     market_code = req.code.strip().upper()
@@ -640,16 +626,11 @@ async def place_wager(conn, req) -> dict[str, Any]:
         raise ValueError("invalid_amount")
 
     market = await get_market(conn, market_code)
+    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
-    market_status = str(market["status"] or "").strip().lower()
-    if market_status != "open":
-        raise ValueError("market_not_active")
-
-    closes_at = _parse_market_datetime(market.get("closes_at"))
-    if closes_at is not None and closes_at <= datetime.now(timezone.utc):
-        await _close_expired_markets(conn, market_code)
+    if str(market["status"]).lower() != "open":
         raise ValueError("market_closed")
 
     option = await conn.fetchrow(
@@ -824,6 +805,7 @@ async def place_wager(conn, req) -> dict[str, Any]:
 
 async def close_market(conn, market_code: str, closed_by: str | None = None) -> dict[str, Any]:
     market = await get_market(conn, market_code)
+    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
@@ -841,6 +823,7 @@ async def close_market(conn, market_code: str, closed_by: str | None = None) -> 
 
 async def cancel_market(conn, market_code: str, cancelled_by: str | None = None, reason: str | None = None) -> dict[str, Any]:
     market = await get_market(conn, market_code)
+    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
@@ -877,6 +860,7 @@ async def cancel_market(conn, market_code: str, cancelled_by: str | None = None,
 
 async def resolve_market(conn, market_code: str, option_code: str, resolved_by: str | None = None, resolution_notes: str | None = None) -> dict[str, Any]:
     market = await get_market(conn, market_code)
+    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
@@ -947,6 +931,7 @@ async def resolve_market_by_numeric_result(
     resolution_notes: str | None = None,
 ) -> dict[str, Any]:
     market = await get_market(conn, market_code)
+    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
