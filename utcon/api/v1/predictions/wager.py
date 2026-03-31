@@ -22,6 +22,16 @@ def _value_error_to_http(detail: str, market_code: str) -> HTTPException:
             },
         )
 
+    if detail == "option_not_found":
+        return HTTPException(
+            status_code=404,
+            detail={
+                "error": "OPTION_NOT_FOUND",
+                "message": f"Option was not found on market `{market_code}`.",
+                "market_code": market_code,
+            },
+        )
+
     if detail == "market_not_active":
         return HTTPException(
             status_code=400,
@@ -74,7 +84,19 @@ async def place_prediction_wager(req: PredictionWagerRequest):
             try:
                 payload = await repo.place_wager(conn, req)
             except LookupError as exc:
-                raise HTTPException(status_code=404, detail=str(exc)) from exc
+                detail = str(exc).strip()
+                if detail == "market_not_found":
+                    raise HTTPException(
+                        status_code=404,
+                        detail={
+                            "error": "MARKET_NOT_FOUND",
+                            "message": f"Prediction market `{market_code}` was not found.",
+                            "market_code": market_code,
+                        },
+                    ) from exc
+                if detail == "option_not_found":
+                    raise _value_error_to_http(detail, market_code) from exc
+                raise HTTPException(status_code=404, detail=detail) from exc
             except ValueError as exc:
                 raise _value_error_to_http(str(exc), market_code) from exc
 

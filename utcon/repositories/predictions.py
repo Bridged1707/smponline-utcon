@@ -668,9 +668,18 @@ async def place_wager(conn, req) -> dict[str, Any]:
     price_after = _to_decimal(price_after)
 
     # Legacy schema compatibility:
-    # prediction_wagers.side, price_yes_before, price_yes_after are still NOT NULL.
-    # For non-binary markets we store the chosen option code in side and mirror the
-    # selected option's before/after prices into the legacy yes fields so inserts succeed.
+    # prediction_wagers.side and the legacy yes-price columns still exist from the
+    # original binary-market design. Some deployments still enforce a CHECK that only
+    # allows YES/NO in `side`. For categorical / numeric markets that would blow up
+    # with a database constraint violation and surface as an HTTP 500.
+    #
+    # We now keep `option_id` as the real source of truth for the chosen option and
+    # only use `side` as a legacy compatibility shim:
+    #   * binary markets keep the actual YES/NO code
+    #   * non-binary markets store YES so legacy constraints keep passing
+    market_type = str(market["market_type"] or "").strip().lower()
+    legacy_side = option_code if market_type == "binary" and option_code in {"YES", "NO"} else "YES"
+
     await conn.execute(
         """
         INSERT INTO prediction_wagers (
@@ -689,7 +698,7 @@ async def place_wager(conn, req) -> dict[str, Any]:
         """,
         market_code,
         req.discord_uuid,
-        option_code,
+        legacy_side,
         option["id"],
         amount,
         price_before,
