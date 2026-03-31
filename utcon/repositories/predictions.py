@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -19,7 +17,6 @@ PREDICTION_FEE_RATE_BPS_BY_TIER = {
 }
 BPS_DENOMINATOR = Decimal("10000")
 PAYOUT_QUANTIZE = Decimal("0.00000001")
-MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 def _normalize_tier(value: Any) -> str:
@@ -89,54 +86,6 @@ def _normalize_status_for_filter(status: str | None, include_closed: bool) -> tu
     normalized = (status or "").strip().lower() or None
     return normalized, include_closed
 
-
-
-
-def _market_local_now() -> datetime:
-    return datetime.now(MARKET_TIMEZONE).replace(tzinfo=None)
-
-
-def _coerce_naive_datetime(value: Any) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        if value.tzinfo is not None:
-            return value.astimezone(timezone.utc).replace(tzinfo=None)
-        return value
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw:
-            return None
-        try:
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if parsed.tzinfo is not None:
-            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
-        return parsed
-    return None
-
-
-async def _close_expired_market_if_needed(conn, market) -> Any:
-    if market is None:
-        return None
-
-    status = str(market["status"] or "").strip().lower()
-    closes_at = _coerce_naive_datetime(market["closes_at"])
-    if status != "open" or closes_at is None or closes_at > _market_local_now():
-        return market
-
-    await conn.execute(
-        """
-        UPDATE prediction_markets
-        SET status = 'closed',
-            updated_at = now()
-        WHERE code = $1
-          AND status = 'open'
-        """,
-        market["code"],
-    )
-    return await get_market(conn, market["code"])
 
 async def get_market(conn, market_code: str):
     return await conn.fetchrow(
@@ -317,7 +266,6 @@ def _serialize_recent_wager(row) -> dict[str, Any]:
 
 async def build_market_payload(conn, market_code: str) -> dict[str, Any]:
     market = await get_market(conn, market_code)
-    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
@@ -363,28 +311,47 @@ async def build_market_payload(conn, market_code: str) -> dict[str, Any]:
 async def list_markets(conn, status: str | None = None, include_closed: bool = False, limit: int = 25):
     status, include_closed = _normalize_status_for_filter(status, include_closed)
 
-    rows = await conn.fetch(
-        """
-        SELECT code
-        FROM prediction_markets
-        ORDER BY created_at DESC, code ASC
-        LIMIT $1
-        """,
-        max(limit * 3, limit),
-    )
+    if include_closed:
+        if status:
+            rows = await conn.fetch(
+                """
+                SELECT code
+                FROM prediction_markets
+                WHERE status = $1
+                ORDER BY created_at DESC, code ASC
+                LIMIT $2
+                """,
+                status,
+                limit,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT code
+                FROM prediction_markets
+                ORDER BY created_at DESC, code ASC
+                LIMIT $1
+                """,
+                limit,
+            )
+    else:
+        effective_status = status or "open"
+        rows = await conn.fetch(
+            """
+            SELECT code
+            FROM prediction_markets
+            WHERE status = $1
+            ORDER BY created_at DESC, code ASC
+            LIMIT $2
+            """,
+            effective_status,
+            limit,
+        )
 
     items: list[dict[str, Any]] = []
-    effective_status = status or ("open" if not include_closed else None)
-
     for row in rows:
         payload = await build_market_payload(conn, row["code"])
         market = payload["market"]
-
-        if effective_status and str(market["status"] or "").strip().lower() != effective_status:
-            continue
-        if not include_closed and effective_status is None and str(market["status"] or "").strip().lower() != "open":
-            continue
-
         items.append(
             {
                 "code": market["code"],
@@ -405,10 +372,8 @@ async def list_markets(conn, status: str | None = None, include_closed: bool = F
                 "options": payload["options"],
             }
         )
-        if len(items) >= limit:
-            break
-
     return items
+
 
 async def create_market(conn, req) -> dict[str, Any]:
     market_code = req.code.strip().upper()
@@ -626,12 +591,11 @@ async def place_wager(conn, req) -> dict[str, Any]:
         raise ValueError("invalid_amount")
 
     market = await get_market(conn, market_code)
-    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
     if str(market["status"]).lower() != "open":
-        raise ValueError("market_closed")
+        raise ValueError("market_not_active")
 
     option = await conn.fetchrow(
         """
@@ -805,7 +769,6 @@ async def place_wager(conn, req) -> dict[str, Any]:
 
 async def close_market(conn, market_code: str, closed_by: str | None = None) -> dict[str, Any]:
     market = await get_market(conn, market_code)
-    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
@@ -823,7 +786,6 @@ async def close_market(conn, market_code: str, closed_by: str | None = None) -> 
 
 async def cancel_market(conn, market_code: str, cancelled_by: str | None = None, reason: str | None = None) -> dict[str, Any]:
     market = await get_market(conn, market_code)
-    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
@@ -860,7 +822,6 @@ async def cancel_market(conn, market_code: str, cancelled_by: str | None = None,
 
 async def resolve_market(conn, market_code: str, option_code: str, resolved_by: str | None = None, resolution_notes: str | None = None) -> dict[str, Any]:
     market = await get_market(conn, market_code)
-    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
@@ -931,7 +892,6 @@ async def resolve_market_by_numeric_result(
     resolution_notes: str | None = None,
 ) -> dict[str, Any]:
     market = await get_market(conn, market_code)
-    market = await _close_expired_market_if_needed(conn, market)
     if market is None:
         raise LookupError("market_not_found")
 
@@ -1202,12 +1162,43 @@ async def process_pending_settlements(conn, market_code: str | None = None, limi
     if not rows:
         return {"items": settlements, "count": 0}
 
+    market_codes = sorted({str(row["market_code"]) for row in rows})
+    pot_rows = await conn.fetch(
+        """
+        SELECT
+            pw.market_code,
+            pm.winning_option_id,
+            COALESCE(SUM(pw.amount), 0) AS total_pot,
+            COALESCE(SUM(CASE WHEN pw.option_id = pm.winning_option_id THEN pw.amount ELSE 0 END), 0) AS winning_pool
+        FROM prediction_wagers pw
+        JOIN prediction_markets pm
+          ON pm.code = pw.market_code
+        WHERE pw.market_code = ANY($1::text[])
+        GROUP BY pw.market_code, pm.winning_option_id
+        """,
+        market_codes,
+    )
+    payout_context_by_market: dict[str, dict[str, Any]] = {
+        str(row["market_code"]): {
+            "total_pot": _to_decimal(row["total_pot"]),
+            "winning_pool": _to_decimal(row["winning_pool"]),
+            "winning_option_id": row["winning_option_id"],
+        }
+        for row in pot_rows
+    }
+
     for row in rows:
         amount = _to_decimal(row["amount"])
         shares_received = _to_decimal(row["shares_received"])
         market_status = str(row["market_status"] or "").strip().lower()
         wager_option_id = row["option_id"]
         winning_option_id = row["winning_option_id"]
+        payout_context = payout_context_by_market.get(
+            str(row["market_code"]),
+            {"total_pot": ZERO, "winning_pool": ZERO, "winning_option_id": winning_option_id},
+        )
+        total_pot = _to_decimal(payout_context.get("total_pot"))
+        winning_pool = _to_decimal(payout_context.get("winning_pool"))
 
         fee_amount = ZERO
         gross_payout_amount = ZERO
@@ -1228,7 +1219,10 @@ async def process_pending_settlements(conn, market_code: str | None = None, limi
             balance_kind = "prediction_refund"
         elif winning_option_id is not None and wager_option_id == winning_option_id:
             outcome = "WIN"
-            gross_payout_seed = shares_received if shares_received > ZERO else amount
+            if winning_pool > ZERO and total_pot > ZERO:
+                gross_payout_seed = _quantize_payout(total_pot * (amount / winning_pool))
+            else:
+                gross_payout_seed = amount
             gross_payout_amount, fee_amount, net_payout_amount = _calculate_prediction_fee_breakdown(
                 amount=amount,
                 gross_payout_amount=gross_payout_seed,
@@ -1237,7 +1231,7 @@ async def process_pending_settlements(conn, market_code: str | None = None, limi
             )
             balance_kind = "prediction_payout"
 
-        profit_amount = net_payout_amount - amount if outcome != "CANCELLED" else ZERO
+        profit_amount = gross_payout_amount - amount if outcome == "WIN" and gross_payout_amount > amount else ZERO
         if net_payout_amount > ZERO:
             await conn.execute(
                 """
@@ -1278,6 +1272,8 @@ async def process_pending_settlements(conn, market_code: str | None = None, limi
                         "gross_payout_amount": str(gross_payout_amount),
                         "fee_amount": str(fee_amount),
                         "net_payout_amount": str(net_payout_amount),
+                        "total_pot": str(total_pot),
+                        "winning_pool": str(winning_pool),
                     }
                 ),
             )
@@ -1325,6 +1321,8 @@ async def process_pending_settlements(conn, market_code: str | None = None, limi
                 "net_payout_amount": net_payout_amount,
                 "fee_amount": fee_amount,
                 "profit_amount": profit_amount,
+                "total_pot": total_pot,
+                "winning_pool": winning_pool,
                 "outcome": outcome,
                 "created_at": row["created_at"],
             }
