@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PredictionMarketType:
@@ -55,10 +56,40 @@ class PredictionMarketCreateRequest(BaseModel):
     description: Optional[str] = None
     market_type: str = PredictionMarketType.BINARY
     resolution_mode: str = PredictionResolutionMode.MANUAL
-    closes_at: Optional[str] = None
-    resolves_at: Optional[str] = None
+    closes_at: Optional[datetime] = None
+    resolves_at: Optional[datetime] = None
     created_by: Optional[str] = None
     options: Optional[List[PredictionMarketCreateOption]] = None
+
+    @field_validator("closes_at", "resolves_at", mode="before")
+    @classmethod
+    def _parse_optional_datetime(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        text = str(value).strip()
+        if not text:
+            return None
+
+        candidates = (
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M",
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        for fmt in candidates:
+            try:
+                return datetime.strptime(text, fmt)
+            except ValueError:
+                pass
+
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError(
+                "invalid datetime format; use YYYY-MM-DD HH:MM"
+            ) from exc
 
 
 class PredictionMarketResponse(BaseModel):
