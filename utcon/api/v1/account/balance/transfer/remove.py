@@ -48,12 +48,23 @@ async def remove_balance(req: AdminBalanceAdjustRequest):
                 req.reference,
             )
 
+            # Use admin_add with a negative amount for compatibility with
+            # current balance_transactions kind constraints.
             await balance_repo.insert_balance_transaction(
                 conn,
                 discord_uuid=req.discord_uuid,
-                kind="admin_remove",
-                amount=amount,
-                metadata={"reference": req.reference} if req.reference else None,
+                kind="admin_add",
+                amount=-amount,
+                metadata=(
+                    {
+                        "reference": req.reference,
+                        "admin_action": "remove",
+                    }
+                    if req.reference
+                    else {
+                        "admin_action": "remove",
+                    }
+                ),
             )
 
             new_balance = await balance_repo.get_balance(conn, req.discord_uuid)
