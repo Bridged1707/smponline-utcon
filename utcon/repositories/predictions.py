@@ -75,8 +75,6 @@ def _calculate_prediction_fee_breakdown(
     return gross_payout_amount, fee_amount, net_payout_amount
 
 
-ZERO
-
 def _to_decimal(value: Any, default: Decimal = ZERO) -> Decimal:
     if value is None:
         return default
@@ -1307,7 +1305,11 @@ async def process_pending_settlements(conn, market_code: str | None = None, limi
             )
             balance_kind = "prediction_payout"
 
-        profit_amount = gross_payout_amount - amount if outcome == "WIN" and gross_payout_amount > amount else ZERO
+        if outcome == "WIN" and net_payout_amount > amount:
+            profit_amount = net_payout_amount - amount
+        else:
+            profit_amount = ZERO
+
         if net_payout_amount > ZERO:
             await conn.execute(
                 """
