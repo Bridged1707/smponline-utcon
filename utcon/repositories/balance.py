@@ -28,6 +28,30 @@ async def get_balance_for_update(conn, discord_uuid: str) -> Optional[Decimal]:
     )
 
 
+async def list_top_balances(conn, *, limit: int = 10, positive_only: bool = True):
+    if positive_only:
+        return await conn.fetch(
+            """
+            SELECT discord_uuid, balance, last_updated
+            FROM balances
+            WHERE balance > 0
+            ORDER BY balance DESC, discord_uuid ASC
+            LIMIT $1
+            """,
+            limit,
+        )
+
+    return await conn.fetch(
+        """
+        SELECT discord_uuid, balance, last_updated
+        FROM balances
+        ORDER BY balance DESC, discord_uuid ASC
+        LIMIT $1
+        """,
+        limit,
+    )
+
+
 async def add_balance(conn, discord_uuid, amount):
     await conn.execute(
         """
