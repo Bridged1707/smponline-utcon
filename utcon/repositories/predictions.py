@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
@@ -219,6 +220,63 @@ async def _market_total_volume_from_options(conn, market_code: str) -> Decimal:
     return _to_decimal(value)
 
 
+def _coerce_naive_utc(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+    return None
+
+
+def _market_close_is_due(market: Any, *, now_utc: datetime | None = None) -> bool:
+    if not market:
+        return False
+    status = str(market["status"] or "").strip().lower()
+    if status != "open":
+        return False
+
+    closes_at = _coerce_naive_utc(market["closes_at"])
+    if closes_at is None:
+        return False
+
+    now_utc = now_utc or datetime.now(timezone.utc).replace(tzinfo=None)
+    return closes_at <= now_utc
+
+
+async def _ensure_market_is_current(conn, market_code: str, market=None):
+    market = market or await get_market(conn, market_code)
+    if market is None:
+        return None
+
+    if _market_close_is_due(market):
+        await conn.execute(
+            """
+            UPDATE prediction_markets
+            SET status = 'closed',
+                updated_at = now()
+            WHERE code = $1
+              AND status = 'open'
+            """,
+            market_code,
+        )
+        market = await get_market(conn, market_code)
+
+    return market
+
+
 def _serialize_option(row) -> dict[str, Any]:
     return {
         "id": row["id"],
@@ -265,7 +323,7 @@ def _serialize_recent_wager(row) -> dict[str, Any]:
 
 
 async def build_market_payload(conn, market_code: str) -> dict[str, Any]:
-    market = await get_market(conn, market_code)
+    market = await _ensure_market_is_current(conn, market_code)
     if market is None:
         raise LookupError("market_not_found")
 
@@ -352,6 +410,13 @@ async def list_markets(conn, status: str | None = None, include_closed: bool = F
     for row in rows:
         payload = await build_market_payload(conn, row["code"])
         market = payload["market"]
+        market_status = str(market["status"] or "").strip().lower()
+
+        if include_closed and status and market_status != status:
+            continue
+        if not include_closed and market_status != (status or "open"):
+            continue
+
         items.append(
             {
                 "code": market["code"],
@@ -372,6 +437,8 @@ async def list_markets(conn, status: str | None = None, include_closed: bool = F
                 "options": payload["options"],
             }
         )
+        if len(items) >= limit:
+            break
     return items
 
 
@@ -590,11 +657,14 @@ async def place_wager(conn, req) -> dict[str, Any]:
     if amount <= ZERO:
         raise ValueError("invalid_amount")
 
-    market = await get_market(conn, market_code)
+    market = await _ensure_market_is_current(conn, market_code)
     if market is None:
         raise LookupError("market_not_found")
 
-    if str(market["status"]).lower() != "open":
+    market_status = str(market["status"] or "").strip().lower()
+    if market_status == "closed":
+        raise ValueError("market_closed")
+    if market_status != "open":
         raise ValueError("market_not_active")
 
     option = await conn.fetchrow(
@@ -768,9 +838,15 @@ async def place_wager(conn, req) -> dict[str, Any]:
 
 
 async def close_market(conn, market_code: str, closed_by: str | None = None) -> dict[str, Any]:
-    market = await get_market(conn, market_code)
+    market = await _ensure_market_is_current(conn, market_code)
     if market is None:
         raise LookupError("market_not_found")
+
+    market_status = str(market["status"] or "").strip().lower()
+    if market_status in {"resolved", "cancelled"}:
+        raise ValueError("market_already_finalized")
+    if market_status == "closed":
+        return await build_market_payload(conn, market_code)
 
     await conn.execute(
         """
@@ -785,7 +861,7 @@ async def close_market(conn, market_code: str, closed_by: str | None = None) -> 
 
 
 async def cancel_market(conn, market_code: str, cancelled_by: str | None = None, reason: str | None = None) -> dict[str, Any]:
-    market = await get_market(conn, market_code)
+    market = await _ensure_market_is_current(conn, market_code)
     if market is None:
         raise LookupError("market_not_found")
 
@@ -821,7 +897,7 @@ async def cancel_market(conn, market_code: str, cancelled_by: str | None = None,
 
 
 async def resolve_market(conn, market_code: str, option_code: str, resolved_by: str | None = None, resolution_notes: str | None = None) -> dict[str, Any]:
-    market = await get_market(conn, market_code)
+    market = await _ensure_market_is_current(conn, market_code)
     if market is None:
         raise LookupError("market_not_found")
 

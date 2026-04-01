@@ -9,8 +9,7 @@ from utcon.schemas.predictions import PredictionCloseRequest
 router = APIRouter(prefix="/api/v1/predictions", tags=["predictions"])
 
 
-@router.post("/close")
-async def close_prediction_market(req: PredictionCloseRequest):
+async def _close_prediction_market(req: PredictionCloseRequest):
     async with db.connection() as conn:
         async with conn.transaction():
             try:
@@ -25,3 +24,18 @@ async def close_prediction_market(req: PredictionCloseRequest):
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return {"status": "ok", **payload}
+
+
+@router.post("/close")
+async def close_prediction_market(req: PredictionCloseRequest):
+    return await _close_prediction_market(req)
+
+
+@router.post("/{market_code}/close")
+async def close_prediction_market_by_path(market_code: str, req: PredictionCloseRequest | None = None):
+    return await _close_prediction_market(
+        PredictionCloseRequest(
+            market_code=market_code.strip().upper(),
+            closed_by=req.closed_by if req else None,
+        )
+    )
