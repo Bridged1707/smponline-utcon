@@ -4,7 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, validator
 
 
 class PredictionMarketType:
@@ -61,13 +61,14 @@ class PredictionMarketCreateRequest(BaseModel):
     created_by: Optional[str] = None
     options: Optional[List[PredictionMarketCreateOption]] = None
 
-    @field_validator("closes_at", "resolves_at", mode="before")
-    @classmethod
+    @validator("closes_at", "resolves_at", pre=True)
     def _parse_optional_datetime(cls, value):
         if value is None:
             return None
+
         if isinstance(value, datetime):
             return value
+
         text = str(value).strip()
         if not text:
             return None
@@ -86,10 +87,8 @@ class PredictionMarketCreateRequest(BaseModel):
 
         try:
             return datetime.fromisoformat(text.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise ValueError(
-                "invalid datetime format; use YYYY-MM-DD HH:MM"
-            ) from exc
+        except ValueError:
+            raise ValueError("invalid datetime format; use YYYY-MM-DD HH:MM")
 
 
 class PredictionMarketResponse(BaseModel):
