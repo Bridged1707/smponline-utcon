@@ -9,19 +9,26 @@ router = APIRouter(prefix="/api/v1/raw/shops", tags=["raw"])
 
 @router.get("/lookup")
 async def lookup_shops(
+    query: Optional[str] = None,
     item_type: Optional[str] = None,
     item_name: Optional[str] = None,
     snbt: Optional[str] = None,
     shop_type: Optional[str] = None,
+    world: Optional[str] = None,
+    x: Optional[int] = None,
+    y: Optional[int] = None,
+    z: Optional[int] = None,
     active_only: bool = False,
+    include_disabled: bool = False,
     last_seen_since_ts: Optional[int] = None,
     exact_price: Optional[float] = None,
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
     item_quantity: Optional[int] = None,
     min_remaining: Optional[int] = None,
+    max_remaining: Optional[int] = None,
     limit: int = Query(default=100, ge=1, le=5000),
-    order_by: Literal["last_seen", "price", "shop_id"] = "last_seen",
+    order_by: Literal["last_seen", "price", "shop_id", "remaining"] = "last_seen",
     order: Literal["asc", "desc"] = "desc",
 ):
     where_clauses = []
@@ -31,6 +38,15 @@ async def lookup_shops(
         params.append(value)
         return f"${len(params)}"
 
+    if not include_disabled:
+        where_clauses.append("is_enabled = TRUE")
+    if query is not None:
+        normalized_query = query.strip()
+        normalized_item_type = normalized_query.upper().replace(" ", "_")
+        like_value = f"%{normalized_query}%"
+        where_clauses.append(
+            f"(item_type = {add_param(normalized_item_type)} OR item_name ILIKE {add_param(like_value)} OR owner_name ILIKE {add_param(like_value)})"
+        )
     if item_type is not None:
         where_clauses.append(f"item_type = {add_param(item_type)}")
     if item_name is not None:
@@ -39,6 +55,14 @@ async def lookup_shops(
         where_clauses.append(f"snbt = {add_param(snbt)}")
     if shop_type is not None:
         where_clauses.append(f"shop_type = {add_param(shop_type)}")
+    if world is not None:
+        where_clauses.append(f"world = {add_param(world)}")
+    if x is not None:
+        where_clauses.append(f"x = {add_param(x)}")
+    if y is not None:
+        where_clauses.append(f"y = {add_param(y)}")
+    if z is not None:
+        where_clauses.append(f"z = {add_param(z)}")
     if active_only:
         where_clauses.append("remaining > 0")
     if last_seen_since_ts is not None:
@@ -53,6 +77,8 @@ async def lookup_shops(
         where_clauses.append(f"item_quantity = {add_param(item_quantity)}")
     if min_remaining is not None:
         where_clauses.append(f"remaining >= {add_param(min_remaining)}")
+    if max_remaining is not None:
+        where_clauses.append(f"remaining <= {add_param(max_remaining)}")
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -60,10 +86,11 @@ async def lookup_shops(
         "last_seen": "last_seen",
         "price": "price",
         "shop_id": "shop_id",
+        "remaining": "remaining",
     }
     order_column = order_columns[order_by]
 
-    query = f"""
+    sql = f"""
         SELECT
             shop_id,
             owner_name,
@@ -79,7 +106,9 @@ async def lookup_shops(
             item_name,
             item_quantity,
             snbt,
-            last_seen
+            last_seen,
+            is_enabled,
+            notes
         FROM shops
         {where_sql}
         ORDER BY {order_column} {order.upper()}, shop_id {order.upper()}
@@ -87,7 +116,7 @@ async def lookup_shops(
     """
 
     async with db.connection() as conn:
-        rows = await conn.fetch(query, *params)
+        rows = await conn.fetch(sql, *params)
 
     return {
         "items": [dict(row) for row in rows],

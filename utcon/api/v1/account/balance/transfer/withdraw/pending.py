@@ -14,12 +14,19 @@ async def pending_withdrawals():
 
         rows = await conn.fetch(
             """
-            SELECT id, discord_uuid, amount, created_at
-            FROM balance_transfers
-            WHERE type='withdraw'
-            AND status='pending'
-            ORDER BY created_at
+            SELECT id, discord_uuid, amount, status, requested_at, processed_at, processed_by, notes, reason
+            FROM withdraw_queue
+            WHERE status='pending'
+            ORDER BY requested_at
             """
         )
 
-    return [dict(r) for r in rows]
+    payload = []
+    for row in rows:
+        item = dict(row)
+        item["amount"] = float(item["amount"])
+        item["requested_at"] = item["requested_at"].isoformat() if item["requested_at"] else None
+        item["processed_at"] = item["processed_at"].isoformat() if item["processed_at"] else None
+        payload.append(item)
+
+    return payload

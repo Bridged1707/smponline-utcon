@@ -1,0 +1,40 @@
+name: Deploy smponline-utcon
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Deploy app
+        run: |
+          APP_DIR="/git/smponline-utcon"
+
+          echo "Navigating to app directory"
+          cd "$APP_DIR"
+
+          echo "Resetting any local changes"
+          git reset --hard
+
+          echo "Fetching updates from origin"
+          git fetch --all
+
+          echo "Pulling latest code"
+          git pull origin main
+
+          echo "Recreating virtual environment"
+          rm -rf venv
+          python3 -m venv venv
+          source venv/bin/activate
+
+          echo "Installing dependencies"
+          pip install -r requirements.txt
+
+          echo "Restarting systemd service"
+          export XDG_RUNTIME_DIR=/run/user/$(id -u) && systemctl --user restart smponline-utcon.service
+
+          echo "Deployment completed successfully!"
