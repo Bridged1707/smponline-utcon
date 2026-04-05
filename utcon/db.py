@@ -13,6 +13,45 @@ def _quote_ident(value: str) -> str:
     return '"' + value.replace('"', '""') + '"'
 
 
+async def _ensure_replica_table_structure(src_conn, dst_conn, table_schema: str, table_name: str) -> None:
+    await dst_conn.execute(f"CREATE SCHEMA IF NOT EXISTS {_quote_ident(table_schema)}")
+
+    columns = await src_conn.fetch(
+        """
+        SELECT
+            a.attname AS column_name,
+            pg_catalog.format_type(a.atttypid, a.atttypmod) AS column_type,
+            a.attnotnull AS not_null
+        FROM pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1
+          AND c.relname = $2
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+        ORDER BY a.attnum
+        """,
+        table_schema,
+        table_name,
+    )
+
+    if not columns:
+        return
+
+    column_defs = []
+    for col in columns:
+        not_null_sql = " NOT NULL" if col["not_null"] else ""
+        column_defs.append(
+            f"{_quote_ident(col['column_name'])} {col['column_type']}{not_null_sql}"
+        )
+
+    create_sql = (
+        f"CREATE TABLE IF NOT EXISTS {_quote_ident(table_schema)}.{_quote_ident(table_name)} "
+        f"({', '.join(column_defs)})"
+    )
+    await dst_conn.execute(create_sql)
+
+
 def _replica_enabled() -> bool:
     return os.getenv("UTDB_REPLICA_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 
@@ -95,6 +134,11 @@ async def _copy_full_database_to_replica() -> None:
             )
 
             async with dst_conn.transaction():
+                for table in tables:
+                    table_schema = table["table_schema"]
+                    table_name = table["table_name"]
+                    await _ensure_replica_table_structure(src_conn, dst_conn, table_schema, table_name)
+
                 for table in tables:
                     table_schema = table["table_schema"]
                     table_name = table["table_name"]
