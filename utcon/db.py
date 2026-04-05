@@ -21,6 +21,10 @@ def _has_replica_config() -> bool:
     return bool(os.getenv("UTDB_REPLICA_USER") and os.getenv("UTDB_REPLICA_PASSWORD") and os.getenv("UTDB_REPLICA_NAME"))
 
 
+def _replica_sync_on_start_enabled() -> bool:
+    return os.getenv("UTDB_REPLICA_SYNC_ON_START", "true").lower() in {"1", "true", "yes", "on"}
+
+
 async def connect():
     global pool, replica_pool
 
@@ -45,6 +49,14 @@ async def connect():
             max_size=3,
         )
         print("[UTCON] remote replica enabled")
+
+        if _replica_sync_on_start_enabled():
+            print("[UTCON] starting initial full replica sync...")
+            try:
+                await _copy_full_database_to_replica()
+                print("[UTCON] initial full replica sync complete")
+            except Exception as exc:
+                print(f"[UTCON] initial full replica sync failed: {exc}")
     else:
         replica_pool = None
         print("[UTCON] remote replica disabled (missing config or disabled flag)")
