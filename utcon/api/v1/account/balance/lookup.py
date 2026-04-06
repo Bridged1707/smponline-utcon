@@ -11,7 +11,16 @@ async def lookup(discord_uuid: str):
     async with db.connection() as conn:
         balance = await balance_repo.get_balance(conn, discord_uuid)
 
-    return {"discord_uuid": discord_uuid, "balance": balance}
+    return {
+        "discord_uuid": discord_uuid,
+        "balance": balance,
+        "current_balance": balance,
+        "new_balance": balance,
+        "user": {
+            "discord_uuid": discord_uuid,
+            "balance": balance,
+        },
+    }
 
 
 @router.get("/top")

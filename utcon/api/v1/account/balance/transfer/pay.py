@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from decimal import Decimal
+import asyncpg
 from utcon.db import get_pool
 
 router = APIRouter()
@@ -22,6 +23,8 @@ async def pay(req: PayRequest):
         raise HTTPException(status_code=400, detail="cannot_pay_self")
 
     pool = get_pool()
+    if pool is None:
+        raise HTTPException(status_code=503, detail="database_unavailable")
 
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -57,26 +60,48 @@ async def pay(req: PayRequest):
                 req.to_discord_uuid
             )
 
-            await conn.execute(
-                """
-                INSERT INTO balance_transfers
-                (discord_uuid,type,amount,status,from_discord_uuid,to_discord_uuid)
-                VALUES ($1,'pay_out',$2,'completed',$1,$3)
-                """,
+            # Keep transfer functional even if optional transfer ledger table
+            # is missing in older environments.
+            try:
+                await conn.execute(
+                    """
+                    INSERT INTO balance_transfers
+                    (discord_uuid,type,amount,status,from_discord_uuid,to_discord_uuid)
+                    VALUES ($1,'pay_out',$2,'completed',$1,$3)
+                    """,
+                    req.from_discord_uuid,
+                    req.amount,
+                    req.to_discord_uuid
+                )
+
+                await conn.execute(
+                    """
+                    INSERT INTO balance_transfers
+                    (discord_uuid,type,amount,status,from_discord_uuid,to_discord_uuid)
+                    VALUES ($1,'pay_in',$2,'completed',$3,$1)
+                    """,
+                    req.to_discord_uuid,
+                    req.amount,
+                    req.from_discord_uuid
+                )
+            except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError):
+                pass
+
+            sender_after = await conn.fetchval(
+                "SELECT balance FROM balances WHERE discord_uuid=$1",
                 req.from_discord_uuid,
-                req.amount,
-                req.to_discord_uuid
             )
-
-            await conn.execute(
-                """
-                INSERT INTO balance_transfers
-                (discord_uuid,type,amount,status,from_discord_uuid,to_discord_uuid)
-                VALUES ($1,'pay_in',$2,'completed',$3,$1)
-                """,
+            receiver_after = await conn.fetchval(
+                "SELECT balance FROM balances WHERE discord_uuid=$1",
                 req.to_discord_uuid,
-                req.amount,
-                req.from_discord_uuid
             )
 
-    return {"status": "payment_complete"}
+    return {
+        "status": "payment_complete",
+        "amount": req.amount,
+        "from_discord_uuid": req.from_discord_uuid,
+        "to_discord_uuid": req.to_discord_uuid,
+        "from_balance": sender_after,
+        "to_balance": receiver_after,
+        "new_balance": receiver_after,
+    }

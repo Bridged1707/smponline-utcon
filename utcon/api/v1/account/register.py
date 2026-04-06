@@ -52,7 +52,8 @@ async def registration_status(discord_uuid: str = Query(...)):
         account = await account_repo.get_account_by_discord_uuid(conn, discord_uuid)
         if account and account.get("mc_uuid"):
             return {
-                "status": "matched",
+                "status": "registered",
+                "legacy_status": "matched",
                 "discord_uuid": discord_uuid,
                 "mc_uuid": account.get("mc_uuid"),
                 "mc_name": account.get("mc_name"),

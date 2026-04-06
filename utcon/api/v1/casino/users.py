@@ -19,7 +19,11 @@ async def get_casino_user(discord_uuid: str):
         user = await casino_repo.get_user(conn, discord_uuid=discord_uuid)
         if user is None:
             raise HTTPException(status_code=404, detail="casino_user_not_found")
-    return {"user": user}
+    return {
+        "user": user,
+        "balance": user.get("balance"),
+        "current_balance": user.get("balance"),
+    }
 
 
 @router.post("/users/{discord_uuid}/register")
@@ -49,7 +53,13 @@ async def update_casino_balance(discord_uuid: str, req: CasinoBalanceUpdateReque
                 )
             except LookupError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"status": "ok", "user": user}
+    return {
+        "status": "ok",
+        "user": user,
+        "balance": user.get("balance"),
+        "current_balance": user.get("balance"),
+        "new_balance": user.get("balance"),
+    }
 
 
 @router.post("/users/{discord_uuid}/financial-transactions/append")

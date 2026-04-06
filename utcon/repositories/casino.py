@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+import asyncpg
+
 
 async def ensure_schema(conn) -> None:
     await conn.execute(
@@ -74,19 +76,61 @@ def _extract_affected_count(status: str | None) -> int:
 
 
 async def get_user(conn, *, discord_uuid: str) -> Optional[Dict[str, Any]]:
-    await ensure_schema(conn)
-    row = await conn.fetchrow(
+    casino_user: Optional[Dict[str, Any]] = None
+
+    try:
+        row = await conn.fetchrow(
+            """
+            SELECT discord_uuid, sender_external_id, balance, created_at, updated_at
+            FROM casino_users
+            WHERE discord_uuid = $1
+            """,
+            discord_uuid,
+        )
+        casino_user = _row_to_dict(row)
+    except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError):
+        casino_user = None
+
+    balance_row = await conn.fetchrow(
         """
-        SELECT discord_uuid, sender_external_id, balance, created_at, updated_at
-        FROM casino_users
+        SELECT discord_uuid, balance
+        FROM balances
         WHERE discord_uuid = $1
         """,
         discord_uuid,
     )
-    return _row_to_dict(row)
+
+    if balance_row is None and casino_user is None:
+        return None
+
+    if balance_row is None:
+        return casino_user
+
+    core_balance = balance_row["balance"]
+
+    if casino_user is None:
+        return {
+            "discord_uuid": discord_uuid,
+            "sender_external_id": discord_uuid,
+            "balance": core_balance,
+            "created_at": None,
+            "updated_at": None,
+        }
+
+    casino_user["balance"] = core_balance
+    return casino_user
 
 
 async def register_user(conn, *, discord_uuid: str, sender_external_id: str) -> Dict[str, Any]:
+    await conn.execute(
+        """
+        INSERT INTO balances(discord_uuid, balance)
+        VALUES($1, 0)
+        ON CONFLICT (discord_uuid) DO NOTHING
+        """,
+        discord_uuid,
+    )
+
     await ensure_schema(conn)
     row = await conn.fetchrow(
         """
@@ -105,21 +149,44 @@ async def register_user(conn, *, discord_uuid: str, sender_external_id: str) -> 
 
 
 async def update_user_balance(conn, *, discord_uuid: str, amount_delta: int) -> Dict[str, Any]:
-    await ensure_schema(conn)
-    row = await conn.fetchrow(
+    balance_row = await conn.fetchrow(
         """
-        UPDATE casino_users
+        UPDATE balances
         SET balance = balance + $2,
-            updated_at = NOW()
+            last_updated = NOW()
         WHERE discord_uuid = $1
-        RETURNING discord_uuid, sender_external_id, balance, created_at, updated_at
+        RETURNING discord_uuid, balance, last_updated
         """,
         discord_uuid,
         amount_delta,
     )
-    if row is None:
+    if balance_row is None:
         raise LookupError("casino_user_not_found")
-    return dict(row)
+
+    # Mirror into casino_users when available; keep this non-fatal to avoid
+    # failing gameplay if the optional casino table is unavailable.
+    try:
+        await conn.execute(
+            """
+            INSERT INTO casino_users(discord_uuid, sender_external_id, balance)
+            VALUES($1, $1, $2)
+            ON CONFLICT (discord_uuid)
+            DO UPDATE SET
+                balance = EXCLUDED.balance,
+                updated_at = NOW()
+            """,
+            discord_uuid,
+            balance_row["balance"],
+        )
+    except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError):
+        pass
+
+    return {
+        "discord_uuid": balance_row["discord_uuid"],
+        "sender_external_id": discord_uuid,
+        "balance": balance_row["balance"],
+        "updated_at": balance_row["last_updated"],
+    }
 
 
 async def get_pf_params(conn, *, discord_uuid: str) -> Optional[Dict[str, Any]]:
