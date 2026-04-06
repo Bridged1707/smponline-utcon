@@ -106,6 +106,7 @@ class PredictionWagerRequest(BaseModel):
     market_code: str
     option_code: str
     amount: Decimal
+    membership_tier: Optional[str] = None
 
 
 class PredictionResolveRequest(BaseModel):
