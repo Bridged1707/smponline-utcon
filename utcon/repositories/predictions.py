@@ -31,7 +31,16 @@ def _get_prediction_fee_rate_bps_for_tier(tier: Any) -> int:
     return int(PREDICTION_FEE_RATE_BPS_BY_TIER.get(_normalize_tier(tier), PREDICTION_FEE_RATE_BPS_BY_TIER["free"]))
 
 
-async def _get_prediction_fee_profile(conn, discord_uuid: str) -> tuple[str, int]:
+async def _get_prediction_fee_profile(
+    conn,
+    discord_uuid: str,
+    *,
+    requested_tier: Any | None = None,
+) -> tuple[str, int]:
+    explicit_tier = str(requested_tier or "").strip().lower()
+    if explicit_tier in PREDICTION_FEE_RATE_BPS_BY_TIER:
+        return explicit_tier, _get_prediction_fee_rate_bps_for_tier(explicit_tier)
+
     membership = await membership_repo.get_effective_membership(conn, discord_uuid)
     tier = _normalize_tier((membership or {}).get("tier"))
     return tier, _get_prediction_fee_rate_bps_for_tier(tier)
@@ -695,7 +704,11 @@ async def place_wager(conn, req) -> dict[str, Any]:
     if _to_decimal(balance["balance"]) < amount:
         raise ValueError("insufficient_balance")
 
-    membership_tier_at_wager, fee_rate_bps_at_wager = await _get_prediction_fee_profile(conn, req.discord_uuid)
+    membership_tier_at_wager, fee_rate_bps_at_wager = await _get_prediction_fee_profile(
+        conn,
+        req.discord_uuid,
+        requested_tier=getattr(req, "membership_tier", None),
+    )
 
     price_before = _to_decimal(option["implied_price"])
     if price_before <= ZERO:
