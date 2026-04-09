@@ -7,6 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import asyncpg
 
 from utcon.repositories import membership as membership_repo
+from utcon.repositories import balance as balance_repo
 
 
 BPS_DENOMINATOR = Decimal("10000")
@@ -150,6 +151,42 @@ def _extract_affected_count(status: str | None) -> int:
         return int(parts[-1])
     except ValueError:
         return 0
+
+
+async def _insert_balance_transaction_compat(
+    conn,
+    *,
+    discord_uuid: str,
+    preferred_kind: str,
+    amount: Decimal,
+    metadata: Dict[str, Any] | None = None,
+) -> str:
+    """
+    Some deployed UTDB instances still enforce older CHECK constraints on
+    balance_transactions.kind. Prefer the semantic gambling kind, but fall back
+    to admin_add with the signed amount so gameplay does not 500.
+    """
+    try:
+        await balance_repo.insert_balance_transaction(
+            conn,
+            discord_uuid=discord_uuid,
+            kind=preferred_kind,
+            amount=amount,
+            metadata=metadata,
+        )
+        return preferred_kind
+    except asyncpg.PostgresError:
+        fallback_metadata = dict(metadata or {})
+        fallback_metadata.setdefault("original_kind", preferred_kind)
+        fallback_metadata.setdefault("compat_fallback", "admin_add")
+        await balance_repo.insert_balance_transaction(
+            conn,
+            discord_uuid=discord_uuid,
+            kind="admin_add",
+            amount=amount,
+            metadata=fallback_metadata,
+        )
+        return "admin_add"
 
 
 async def get_user(conn, *, discord_uuid: str) -> Optional[Dict[str, Any]]:
@@ -493,14 +530,13 @@ async def start_game_session(
         json.dumps(metadata or {}),
     )
 
-    await conn.execute(
-        """
-        INSERT INTO balance_transactions(discord_uuid, kind, amount, metadata)
-        VALUES ($1, 'gambling_wager', $2, $3::jsonb)
-        """,
-        discord_uuid,
-        -wager_amount,
-        json.dumps({"game_type": str(game_type).strip().lower(), "session_id": session["id"], **(metadata or {})}),
+    balance_tx_metadata = {"game_type": str(game_type).strip().lower(), "session_id": session["id"], **(metadata or {})}
+    applied_balance_kind = await _insert_balance_transaction_compat(
+        conn,
+        discord_uuid=discord_uuid,
+        preferred_kind="gambling_wager",
+        amount=-wager_amount,
+        metadata=balance_tx_metadata,
     )
 
     try:
@@ -519,7 +555,8 @@ async def start_game_session(
     new_balance = await conn.fetchval("SELECT balance FROM balances WHERE discord_uuid = $1", discord_uuid)
     payload = dict(session)
     payload["current_balance"] = new_balance
-    return {"session": payload, "balance": new_balance, "current_balance": new_balance}
+    payload["applied_balance_transaction_kind"] = applied_balance_kind
+    return {"session": payload, "balance": new_balance, "current_balance": new_balance, "applied_balance_transaction_kind": applied_balance_kind}
 
 
 async def settle_game_session(
@@ -622,15 +659,14 @@ async def settle_game_session(
         json.dumps(merged_metadata),
     )
 
+    applied_balance_kind = None
     if net_payout_amount > Decimal("0"):
-        await conn.execute(
-            """
-            INSERT INTO balance_transactions(discord_uuid, kind, amount, metadata)
-            VALUES ($1, 'gambling_payout', $2, $3::jsonb)
-            """,
-            discord_uuid,
-            net_payout_amount,
-            json.dumps(merged_metadata),
+        applied_balance_kind = await _insert_balance_transaction_compat(
+            conn,
+            discord_uuid=discord_uuid,
+            preferred_kind="gambling_payout",
+            amount=net_payout_amount,
+            metadata=merged_metadata,
         )
 
     try:
@@ -649,4 +685,6 @@ async def settle_game_session(
     new_balance = await conn.fetchval("SELECT balance FROM balances WHERE discord_uuid = $1", discord_uuid)
     payload = dict(updated)
     payload["current_balance"] = new_balance
-    return {"session": payload, "balance": new_balance, "current_balance": new_balance}
+    if applied_balance_kind is not None:
+        payload["applied_balance_transaction_kind"] = applied_balance_kind
+    return {"session": payload, "balance": new_balance, "current_balance": new_balance, "applied_balance_transaction_kind": applied_balance_kind}

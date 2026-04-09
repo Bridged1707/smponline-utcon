@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from utcon import db
 from utcon.repositories import casino as casino_repo
 from utcon.schemas.casino import CasinoGameSessionStartRequest, CasinoGameSessionSettleRequest
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/casino", tags=["casino"])
 
@@ -25,6 +29,9 @@ async def start_casino_game_session(req: CasinoGameSessionStartRequest):
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except Exception as exc:
+                logger.exception("start casino game session failed")
+                raise HTTPException(status_code=500, detail=f"casino_game_start_failed:{type(exc).__name__}") from exc
 
     return {"status": "ok", **payload}
 
@@ -48,5 +55,8 @@ async def settle_casino_game_session(session_id: int, req: CasinoGameSessionSett
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except Exception as exc:
+                logger.exception("start casino game session failed")
+                raise HTTPException(status_code=500, detail=f"casino_game_start_failed:{type(exc).__name__}") from exc
 
     return {"status": "ok", **payload}
