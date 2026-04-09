@@ -64,7 +64,8 @@ def _calculate_settlement(*, wager_amount: Decimal, gross_payout_amount: Decimal
 
 async def ensure_schema(conn) -> None:
     try:
-        await conn.execute(
+        async with conn.transaction():
+            await conn.execute(
         """
         CREATE TABLE IF NOT EXISTS casino_users (
             discord_uuid TEXT PRIMARY KEY,
@@ -156,6 +157,26 @@ def _extract_affected_count(status: str | None) -> int:
         return 0
 
 
+async def _execute_optional(conn, query: str, *args):
+    """
+    Run an optional SQL statement inside a savepoint so expected failures on
+    legacy or unavailable casino side tables do not poison the outer
+    transaction.
+    """
+    async with conn.transaction():
+        return await conn.execute(query, *args)
+
+
+async def _fetchrow_optional(conn, query: str, *args):
+    async with conn.transaction():
+        return await conn.fetchrow(query, *args)
+
+
+async def _fetchval_optional(conn, query: str, *args):
+    async with conn.transaction():
+        return await conn.fetchval(query, *args)
+
+
 async def _insert_balance_transaction_compat(
     conn,
     *,
@@ -168,27 +189,33 @@ async def _insert_balance_transaction_compat(
     Some deployed UTDB instances still enforce older CHECK constraints on
     balance_transactions.kind. Prefer the semantic gambling kind, but fall back
     to admin_add with the signed amount so gameplay does not 500.
+
+    Each attempt runs inside its own savepoint. Without that, a rejected insert
+    leaves the outer transaction aborted and every later statement fails with
+    InFailedSQLTransactionError.
     """
     try:
-        await balance_repo.insert_balance_transaction(
-            conn,
-            discord_uuid=discord_uuid,
-            kind=preferred_kind,
-            amount=amount,
-            metadata=metadata,
-        )
+        async with conn.transaction():
+            await balance_repo.insert_balance_transaction(
+                conn,
+                discord_uuid=discord_uuid,
+                kind=preferred_kind,
+                amount=amount,
+                metadata=metadata,
+            )
         return preferred_kind
     except asyncpg.PostgresError:
         fallback_metadata = dict(metadata or {})
         fallback_metadata.setdefault("original_kind", preferred_kind)
         fallback_metadata.setdefault("compat_fallback", "admin_add")
-        await balance_repo.insert_balance_transaction(
-            conn,
-            discord_uuid=discord_uuid,
-            kind="admin_add",
-            amount=amount,
-            metadata=fallback_metadata,
-        )
+        async with conn.transaction():
+            await balance_repo.insert_balance_transaction(
+                conn,
+                discord_uuid=discord_uuid,
+                kind="admin_add",
+                amount=amount,
+                metadata=fallback_metadata,
+            )
         return "admin_add"
 
 
@@ -196,7 +223,7 @@ async def get_user(conn, *, discord_uuid: str) -> Optional[Dict[str, Any]]:
     casino_user: Optional[Dict[str, Any]] = None
 
     try:
-        row = await conn.fetchrow(
+        row = await _fetchrow_optional(conn,
             """
             SELECT discord_uuid, sender_external_id, balance, created_at, updated_at
             FROM casino_users
@@ -283,7 +310,8 @@ async def update_user_balance(conn, *, discord_uuid: str, amount_delta: int) -> 
     # Mirror into casino_users when available; keep this non-fatal to avoid
     # failing gameplay if the optional casino table is unavailable.
     try:
-        await conn.execute(
+        await _execute_optional(
+            conn,
             """
             INSERT INTO casino_users(discord_uuid, sender_external_id, balance)
             VALUES($1, $1, $2)
@@ -308,7 +336,8 @@ async def update_user_balance(conn, *, discord_uuid: str, amount_delta: int) -> 
 
 async def get_pf_params(conn, *, discord_uuid: str) -> Optional[Dict[str, Any]]:
     await ensure_schema(conn)
-    row = await conn.fetchrow(
+    row = await _fetchrow_optional(
+        conn,
         """
         SELECT discord_uuid, client_seed, server_seed, nonce, created_at, updated_at
         FROM casino_pf_params
@@ -328,7 +357,8 @@ async def save_pf_params(
     nonce: int,
 ) -> Dict[str, Any]:
     await ensure_schema(conn)
-    row = await conn.fetchrow(
+    row = await _fetchrow_optional(
+        conn,
         """
         INSERT INTO casino_pf_params(discord_uuid, client_seed, server_seed, nonce)
         VALUES($1, $2, $3, $4)
@@ -358,7 +388,7 @@ async def append_financial_transaction(
 ) -> Dict[str, Any]:
     await ensure_schema(conn)
 
-    exists = await conn.fetchval(
+    exists = await _fetchval_optional(conn,
         """
         SELECT 1
         FROM casino_users
@@ -369,7 +399,8 @@ async def append_financial_transaction(
     if exists is None:
         raise LookupError("casino_user_not_found")
 
-    row = await conn.fetchrow(
+    row = await _fetchrow_optional(
+        conn,
         """
         INSERT INTO casino_financial_transactions(discord_uuid, type, amount, net_amount)
         VALUES($1, $2, $3, $4)
@@ -385,7 +416,8 @@ async def append_financial_transaction(
 
 async def save_account_panel_message(conn, *, message_id: int) -> Dict[str, Any]:
     await ensure_schema(conn)
-    row = await conn.fetchrow(
+    row = await _fetchrow_optional(
+        conn,
         """
         INSERT INTO casino_state(state_key, message_id)
         VALUES('account_panel', $1)
@@ -402,7 +434,8 @@ async def save_account_panel_message(conn, *, message_id: int) -> Dict[str, Any]
 
 async def get_account_panel_message(conn) -> Optional[Dict[str, Any]]:
     await ensure_schema(conn)
-    row = await conn.fetchrow(
+    row = await _fetchrow_optional(
+        conn,
         """
         SELECT state_key, message_id, updated_at
         FROM casino_state
@@ -422,7 +455,8 @@ async def create_table(
     category_name: str,
 ) -> Dict[str, Any]:
     await ensure_schema(conn)
-    row = await conn.fetchrow(
+    row = await _fetchrow_optional(
+        conn,
         """
         INSERT INTO casino_tables(channel_id, category_id, table_number, channel_name, category_name)
         VALUES($1, $2, $3, $4, $5)
@@ -446,7 +480,9 @@ async def create_table(
 
 async def list_tables(conn) -> list[Dict[str, Any]]:
     await ensure_schema(conn)
-    rows = await conn.fetch(
+    await ensure_schema(conn)
+    async with conn.transaction():
+        rows = await conn.fetch(
         """
         SELECT channel_id, category_id, table_number, channel_name, category_name, created_at, updated_at
         FROM casino_tables
@@ -458,7 +494,8 @@ async def list_tables(conn) -> list[Dict[str, Any]]:
 
 async def delete_table(conn, *, channel_id: int) -> bool:
     await ensure_schema(conn)
-    status = await conn.execute(
+    status = await _execute_optional(
+        conn,
         """
         DELETE FROM casino_tables
         WHERE channel_id = $1
@@ -470,13 +507,13 @@ async def delete_table(conn, *, channel_id: int) -> bool:
 
 async def clear_tables(conn) -> int:
     await ensure_schema(conn)
-    status = await conn.execute("DELETE FROM casino_tables")
+    status = await _execute_optional(conn, "DELETE FROM casino_tables")
     return _extract_affected_count(status)
 
 
 async def count_tables(conn) -> int:
     await ensure_schema(conn)
-    count = await conn.fetchval("SELECT COUNT(*) FROM casino_tables")
+    count = await _fetchval_optional(conn, "SELECT COUNT(*) FROM casino_tables")
     return int(count or 0)
 
 
@@ -541,7 +578,8 @@ async def start_game_session(
     )
 
     try:
-        await conn.execute(
+        await _execute_optional(
+            conn,
             """
             INSERT INTO casino_financial_transactions(discord_uuid, type, amount, net_amount)
             VALUES ($1, 'gambling_wager', $2, $3)
@@ -669,7 +707,8 @@ async def settle_game_session(
         )
 
     try:
-        await conn.execute(
+        await _execute_optional(
+            conn,
             """
             INSERT INTO casino_financial_transactions(discord_uuid, type, amount, net_amount)
             VALUES ($1, 'gambling_settlement', $2, $3)
