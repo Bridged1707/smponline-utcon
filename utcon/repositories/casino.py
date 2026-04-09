@@ -1,8 +1,64 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
+import json
+from decimal import Decimal, ROUND_HALF_UP
 
 import asyncpg
+
+from utcon.repositories import membership as membership_repo
+
+
+BPS_DENOMINATOR = Decimal("10000")
+PAYOUT_QUANTIZE = Decimal("0.00000001")
+CASINO_FEE_RATE_BPS_BY_TIER = {"free": 1000, "pro": 700, "garry": 300}
+
+
+def _to_decimal(value: Any, default: Decimal = Decimal("0")) -> Decimal:
+    if value is None:
+        return default
+    return Decimal(str(value))
+
+
+def _normalize_tier(value: Any) -> str:
+    tier = str(value or "").strip().lower()
+    return tier if tier in CASINO_FEE_RATE_BPS_BY_TIER else "free"
+
+
+def _quantize(value: Decimal) -> Decimal:
+    return _to_decimal(value).quantize(PAYOUT_QUANTIZE, rounding=ROUND_HALF_UP)
+
+
+async def _get_fee_profile(conn, discord_uuid: str, requested_tier: Any | None = None) -> tuple[str, int]:
+    explicit_tier = str(requested_tier or "").strip().lower()
+    if explicit_tier in CASINO_FEE_RATE_BPS_BY_TIER:
+        return explicit_tier, CASINO_FEE_RATE_BPS_BY_TIER[explicit_tier]
+
+    membership = await membership_repo.get_effective_membership(conn, discord_uuid)
+    tier = _normalize_tier((membership or {}).get("tier"))
+    return tier, CASINO_FEE_RATE_BPS_BY_TIER[tier]
+
+
+def _calculate_settlement(*, wager_amount: Decimal, gross_payout_amount: Decimal, fee_rate_bps: int) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+    wager_amount = _to_decimal(wager_amount)
+    gross_payout_amount = _to_decimal(gross_payout_amount)
+
+    if gross_payout_amount <= Decimal("0"):
+        return Decimal("0"), Decimal("0"), Decimal("0"), Decimal("0")
+
+    gross_profit_amount = gross_payout_amount - wager_amount
+    if gross_profit_amount <= Decimal("0"):
+        return gross_payout_amount, Decimal("0"), gross_payout_amount, gross_payout_amount - wager_amount
+
+    fee_amount = _quantize(gross_profit_amount * Decimal(int(fee_rate_bps)) / BPS_DENOMINATOR)
+    if fee_amount < Decimal("0"):
+        fee_amount = Decimal("0")
+    if fee_amount > gross_profit_amount:
+        fee_amount = gross_profit_amount
+
+    net_payout_amount = gross_payout_amount - fee_amount
+    net_profit_amount = net_payout_amount - wager_amount
+    return gross_payout_amount, fee_amount, net_payout_amount, net_profit_amount
 
 
 async def ensure_schema(conn) -> None:
@@ -40,6 +96,24 @@ async def ensure_schema(conn) -> None:
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
 
+        CREATE TABLE IF NOT EXISTS casino_game_sessions (
+            id BIGSERIAL PRIMARY KEY,
+            discord_uuid TEXT NOT NULL,
+            game_type TEXT NOT NULL,
+            wager_amount NUMERIC NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open',
+            outcome TEXT,
+            membership_tier TEXT,
+            fee_rate_bps INTEGER NOT NULL DEFAULT 0,
+            gross_payout_amount NUMERIC NOT NULL DEFAULT 0,
+            fee_amount NUMERIC NOT NULL DEFAULT 0,
+            net_payout_amount NUMERIC NOT NULL DEFAULT 0,
+            profit_amount NUMERIC NOT NULL DEFAULT 0,
+            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            resolved_at TIMESTAMPTZ
+        );
+
         CREATE TABLE IF NOT EXISTS casino_tables (
             channel_id BIGINT PRIMARY KEY,
             category_id BIGINT NOT NULL,
@@ -55,6 +129,9 @@ async def ensure_schema(conn) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_casino_financial_transactions_discord_uuid
             ON casino_financial_transactions(discord_uuid);
+
+        CREATE INDEX IF NOT EXISTS idx_casino_game_sessions_discord_uuid
+            ON casino_game_sessions(discord_uuid, created_at DESC);
         """
     )
 
@@ -361,3 +438,215 @@ async def count_tables(conn) -> int:
     await ensure_schema(conn)
     count = await conn.fetchval("SELECT COUNT(*) FROM casino_tables")
     return int(count or 0)
+
+
+async def start_game_session(
+    conn,
+    *,
+    discord_uuid: str,
+    game_type: str,
+    wager_amount: Any,
+    metadata: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    await ensure_schema(conn)
+
+    wager_amount = _to_decimal(wager_amount)
+    if wager_amount <= Decimal("0"):
+        raise ValueError("invalid_wager_amount")
+
+    balance_row = await conn.fetchrow(
+        """
+        SELECT discord_uuid, balance
+        FROM balances
+        WHERE discord_uuid = $1
+        FOR UPDATE
+        """,
+        discord_uuid,
+    )
+    if balance_row is None:
+        raise LookupError("casino_user_not_found")
+
+    current_balance = _to_decimal(balance_row["balance"])
+    if current_balance < wager_amount:
+        raise ValueError("insufficient_balance")
+
+    await conn.execute(
+        """
+        UPDATE balances
+        SET balance = balance - $2,
+            last_updated = NOW()
+        WHERE discord_uuid = $1
+        """,
+        discord_uuid,
+        wager_amount,
+    )
+
+    session = await conn.fetchrow(
+        """
+        INSERT INTO casino_game_sessions(discord_uuid, game_type, wager_amount, metadata)
+        VALUES ($1, $2, $3, $4::jsonb)
+        RETURNING *
+        """,
+        discord_uuid,
+        str(game_type).strip().lower(),
+        wager_amount,
+        json.dumps(metadata or {}),
+    )
+
+    await conn.execute(
+        """
+        INSERT INTO balance_transactions(discord_uuid, kind, amount, metadata)
+        VALUES ($1, 'gambling_wager', $2, $3::jsonb)
+        """,
+        discord_uuid,
+        -wager_amount,
+        json.dumps({"game_type": str(game_type).strip().lower(), "session_id": session["id"], **(metadata or {})}),
+    )
+
+    try:
+        await conn.execute(
+            """
+            INSERT INTO casino_financial_transactions(discord_uuid, type, amount, net_amount)
+            VALUES ($1, 'gambling_wager', $2, $3)
+            """,
+            discord_uuid,
+            int(wager_amount),
+            -int(wager_amount),
+        )
+    except Exception:
+        pass
+
+    new_balance = await conn.fetchval("SELECT balance FROM balances WHERE discord_uuid = $1", discord_uuid)
+    payload = dict(session)
+    payload["current_balance"] = new_balance
+    return {"session": payload, "balance": new_balance, "current_balance": new_balance}
+
+
+async def settle_game_session(
+    conn,
+    *,
+    session_id: int,
+    gross_payout_amount: Any,
+    outcome: str,
+    metadata: Dict[str, Any] | None = None,
+    requested_tier: Any | None = None,
+) -> Dict[str, Any]:
+    await ensure_schema(conn)
+
+    session_row = await conn.fetchrow(
+        """
+        SELECT *
+        FROM casino_game_sessions
+        WHERE id = $1
+        FOR UPDATE
+        """,
+        session_id,
+    )
+    if session_row is None:
+        raise LookupError("casino_game_session_not_found")
+    if str(session_row["status"] or "").lower() != "open":
+        raise RuntimeError("casino_game_session_already_settled")
+
+    discord_uuid = session_row["discord_uuid"]
+    balance_row = await conn.fetchrow(
+        """
+        SELECT balance
+        FROM balances
+        WHERE discord_uuid = $1
+        FOR UPDATE
+        """,
+        discord_uuid,
+    )
+    if balance_row is None:
+        raise LookupError("casino_user_not_found")
+
+    wager_amount = _to_decimal(session_row["wager_amount"])
+    requested_gross_payout = _to_decimal(gross_payout_amount)
+    if requested_gross_payout < Decimal("0"):
+        raise ValueError("invalid_gross_payout_amount")
+
+    membership_tier, fee_rate_bps = await _get_fee_profile(conn, discord_uuid, requested_tier=requested_tier)
+    gross_payout_amount, fee_amount, net_payout_amount, net_profit_amount = _calculate_settlement(
+        wager_amount=wager_amount,
+        gross_payout_amount=requested_gross_payout,
+        fee_rate_bps=fee_rate_bps,
+    )
+
+    if net_payout_amount > Decimal("0"):
+        await conn.execute(
+            """
+            UPDATE balances
+            SET balance = balance + $2,
+                last_updated = NOW()
+            WHERE discord_uuid = $1
+            """,
+            discord_uuid,
+            net_payout_amount,
+        )
+
+    merged_metadata = dict(session_row["metadata"] or {})
+    merged_metadata.update(metadata or {})
+    merged_metadata.update({
+        "session_id": session_id,
+        "game_type": session_row["game_type"],
+        "outcome": outcome,
+        "gross_payout_amount": str(gross_payout_amount),
+        "fee_amount": str(fee_amount),
+        "net_payout_amount": str(net_payout_amount),
+    })
+
+    updated = await conn.fetchrow(
+        """
+        UPDATE casino_game_sessions
+        SET status = 'settled',
+            outcome = $2,
+            membership_tier = $3,
+            fee_rate_bps = $4,
+            gross_payout_amount = $5,
+            fee_amount = $6,
+            net_payout_amount = $7,
+            profit_amount = $8,
+            metadata = $9::jsonb,
+            resolved_at = NOW()
+        WHERE id = $1
+        RETURNING *
+        """,
+        session_id,
+        str(outcome).strip().lower(),
+        membership_tier,
+        fee_rate_bps,
+        gross_payout_amount,
+        fee_amount,
+        net_payout_amount,
+        net_profit_amount,
+        json.dumps(merged_metadata),
+    )
+
+    if net_payout_amount > Decimal("0"):
+        await conn.execute(
+            """
+            INSERT INTO balance_transactions(discord_uuid, kind, amount, metadata)
+            VALUES ($1, 'gambling_payout', $2, $3::jsonb)
+            """,
+            discord_uuid,
+            net_payout_amount,
+            json.dumps(merged_metadata),
+        )
+
+    try:
+        await conn.execute(
+            """
+            INSERT INTO casino_financial_transactions(discord_uuid, type, amount, net_amount)
+            VALUES ($1, 'gambling_settlement', $2, $3)
+            """,
+            discord_uuid,
+            int(gross_payout_amount),
+            int(net_payout_amount),
+        )
+    except Exception:
+        pass
+
+    new_balance = await conn.fetchval("SELECT balance FROM balances WHERE discord_uuid = $1", discord_uuid)
+    payload = dict(updated)
+    payload["current_balance"] = new_balance
+    return {"session": payload, "balance": new_balance, "current_balance": new_balance}
