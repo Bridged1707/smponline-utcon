@@ -56,7 +56,7 @@ async def settle_casino_game_session(session_id: int, req: CasinoGameSessionSett
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except Exception as exc:
-                logger.exception("start casino game session failed")
-                raise HTTPException(status_code=500, detail=f"casino_game_start_failed:{type(exc).__name__}") from exc
+                logger.exception("settle casino game session failed")
+                raise HTTPException(status_code=500, detail=f"casino_game_settle_failed:{type(exc).__name__}") from exc
 
     return {"status": "ok", **payload}

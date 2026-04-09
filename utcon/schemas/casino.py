@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from pydantic import BaseModel, Field
 
 
@@ -41,12 +43,12 @@ from typing import Any
 class CasinoGameSessionStartRequest(BaseModel):
     discord_uuid: str = Field(min_length=1, max_length=255)
     game_type: str = Field(min_length=1, max_length=64)
-    wager_amount: float = Field(gt=0)
+    wager_amount: Decimal = Field(gt=0)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class CasinoGameSessionSettleRequest(BaseModel):
-    gross_payout_amount: float = Field(ge=0)
+    gross_payout_amount: Decimal = Field(ge=0)
     outcome: str = Field(min_length=1, max_length=32)
     membership_tier: str | None = Field(default=None, max_length=32)
     metadata: dict[str, Any] = Field(default_factory=dict)

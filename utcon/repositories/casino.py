@@ -63,7 +63,8 @@ def _calculate_settlement(*, wager_amount: Decimal, gross_payout_amount: Decimal
 
 
 async def ensure_schema(conn) -> None:
-    await conn.execute(
+    try:
+        await conn.execute(
         """
         CREATE TABLE IF NOT EXISTS casino_users (
             discord_uuid TEXT PRIMARY KEY,
@@ -135,6 +136,8 @@ async def ensure_schema(conn) -> None:
             ON casino_game_sessions(discord_uuid, created_at DESC);
         """
     )
+    except (asyncpg.InsufficientPrivilegeError, asyncpg.PostgresError):
+        return
 
 
 def _row_to_dict(row) -> Optional[Dict[str, Any]]:
@@ -485,8 +488,6 @@ async def start_game_session(
     wager_amount: Any,
     metadata: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    await ensure_schema(conn)
-
     wager_amount = _to_decimal(wager_amount)
     if wager_amount <= Decimal("0"):
         raise ValueError("invalid_wager_amount")
@@ -568,8 +569,6 @@ async def settle_game_session(
     metadata: Dict[str, Any] | None = None,
     requested_tier: Any | None = None,
 ) -> Dict[str, Any]:
-    await ensure_schema(conn)
-
     session_row = await conn.fetchrow(
         """
         SELECT *
