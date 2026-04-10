@@ -66,77 +66,77 @@ async def ensure_schema(conn) -> None:
     try:
         async with conn.transaction():
             await conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS casino_users (
-            discord_uuid TEXT PRIMARY KEY,
-            sender_external_id TEXT NOT NULL,
-            balance BIGINT NOT NULL DEFAULT 0,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
+                """
+                CREATE TABLE IF NOT EXISTS casino_users (
+                    discord_uuid TEXT PRIMARY KEY,
+                    sender_external_id TEXT NOT NULL,
+                    balance BIGINT NOT NULL DEFAULT 0,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
 
-        CREATE TABLE IF NOT EXISTS casino_pf_params (
-            discord_uuid TEXT PRIMARY KEY,
-            client_seed TEXT NOT NULL,
-            server_seed TEXT NOT NULL,
-            nonce BIGINT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
+                CREATE TABLE IF NOT EXISTS casino_pf_params (
+                    discord_uuid TEXT PRIMARY KEY,
+                    client_seed TEXT NOT NULL,
+                    server_seed TEXT NOT NULL,
+                    nonce BIGINT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
 
-        CREATE TABLE IF NOT EXISTS casino_financial_transactions (
-            id BIGSERIAL PRIMARY KEY,
-            discord_uuid TEXT NOT NULL,
-            type TEXT NOT NULL,
-            amount BIGINT NOT NULL,
-            net_amount BIGINT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
+                CREATE TABLE IF NOT EXISTS casino_financial_transactions (
+                    id BIGSERIAL PRIMARY KEY,
+                    discord_uuid TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    amount BIGINT NOT NULL,
+                    net_amount BIGINT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
 
-        CREATE TABLE IF NOT EXISTS casino_state (
-            state_key TEXT PRIMARY KEY,
-            message_id BIGINT,
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
+                CREATE TABLE IF NOT EXISTS casino_state (
+                    state_key TEXT PRIMARY KEY,
+                    message_id BIGINT,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
 
-        CREATE TABLE IF NOT EXISTS casino_game_sessions (
-            id BIGSERIAL PRIMARY KEY,
-            discord_uuid TEXT NOT NULL,
-            game_type TEXT NOT NULL,
-            wager_amount NUMERIC NOT NULL,
-            status TEXT NOT NULL DEFAULT 'open',
-            outcome TEXT,
-            membership_tier TEXT,
-            fee_rate_bps INTEGER NOT NULL DEFAULT 0,
-            gross_payout_amount NUMERIC NOT NULL DEFAULT 0,
-            fee_amount NUMERIC NOT NULL DEFAULT 0,
-            net_payout_amount NUMERIC NOT NULL DEFAULT 0,
-            profit_amount NUMERIC NOT NULL DEFAULT 0,
-            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            resolved_at TIMESTAMPTZ
-        );
+                CREATE TABLE IF NOT EXISTS casino_game_sessions (
+                    id BIGSERIAL PRIMARY KEY,
+                    discord_uuid TEXT NOT NULL,
+                    game_type TEXT NOT NULL,
+                    wager_amount NUMERIC NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    outcome TEXT,
+                    membership_tier TEXT,
+                    fee_rate_bps INTEGER NOT NULL DEFAULT 0,
+                    gross_payout_amount NUMERIC NOT NULL DEFAULT 0,
+                    fee_amount NUMERIC NOT NULL DEFAULT 0,
+                    net_payout_amount NUMERIC NOT NULL DEFAULT 0,
+                    profit_amount NUMERIC NOT NULL DEFAULT 0,
+                    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    resolved_at TIMESTAMPTZ
+                );
 
-        CREATE TABLE IF NOT EXISTS casino_tables (
-            channel_id BIGINT PRIMARY KEY,
-            category_id BIGINT NOT NULL,
-            table_number INTEGER NOT NULL,
-            channel_name TEXT NOT NULL,
-            category_name TEXT NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        );
+                CREATE TABLE IF NOT EXISTS casino_tables (
+                    channel_id BIGINT PRIMARY KEY,
+                    category_id BIGINT NOT NULL,
+                    table_number INTEGER NOT NULL,
+                    channel_name TEXT NOT NULL,
+                    category_name TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
 
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_casino_tables_table_number
-            ON casino_tables(table_number);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_casino_tables_table_number
+                    ON casino_tables(table_number);
 
-        CREATE INDEX IF NOT EXISTS idx_casino_financial_transactions_discord_uuid
-            ON casino_financial_transactions(discord_uuid);
+                CREATE INDEX IF NOT EXISTS idx_casino_financial_transactions_discord_uuid
+                    ON casino_financial_transactions(discord_uuid);
 
-        CREATE INDEX IF NOT EXISTS idx_casino_game_sessions_discord_uuid
-            ON casino_game_sessions(discord_uuid, created_at DESC);
-        """
-    )
+                CREATE INDEX IF NOT EXISTS idx_casino_game_sessions_discord_uuid
+                    ON casino_game_sessions(discord_uuid, created_at DESC);
+                """
+            )
     except (asyncpg.InsufficientPrivilegeError, asyncpg.PostgresError):
         return
 
@@ -219,64 +219,24 @@ async def _insert_balance_transaction_compat(
         return "admin_add"
 
 
-async def get_user(conn, *, discord_uuid: str) -> Optional[Dict[str, Any]]:
-    casino_user: Optional[Dict[str, Any]] = None
-
-    try:
-        row = await _fetchrow_optional(conn,
-            """
-            SELECT discord_uuid, sender_external_id, balance, created_at, updated_at
-            FROM casino_users
-            WHERE discord_uuid = $1
-            """,
-            discord_uuid,
-        )
-        casino_user = _row_to_dict(row)
-    except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError):
-        casino_user = None
-
-    balance_row = await conn.fetchrow(
+async def get_user(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
+    await ensure_schema(conn)
+    row = await _fetchrow_optional(
+        conn,
         """
-        SELECT discord_uuid, balance
-        FROM balances
+        SELECT discord_uuid, sender_external_id, balance, created_at, updated_at
+        FROM casino_users
         WHERE discord_uuid = $1
         """,
         discord_uuid,
     )
-
-    if balance_row is None and casino_user is None:
-        return None
-
-    if balance_row is None:
-        return casino_user
-
-    core_balance = balance_row["balance"]
-
-    if casino_user is None:
-        return {
-            "discord_uuid": discord_uuid,
-            "sender_external_id": discord_uuid,
-            "balance": core_balance,
-            "created_at": None,
-            "updated_at": None,
-        }
-
-    casino_user["balance"] = core_balance
-    return casino_user
+    return _row_to_dict(row)
 
 
-async def register_user(conn, *, discord_uuid: str, sender_external_id: str) -> Dict[str, Any]:
-    await conn.execute(
-        """
-        INSERT INTO balances(discord_uuid, balance)
-        VALUES($1, 0)
-        ON CONFLICT (discord_uuid) DO NOTHING
-        """,
-        discord_uuid,
-    )
-
+async def upsert_user(conn, discord_uuid: str, sender_external_id: str) -> Dict[str, Any]:
     await ensure_schema(conn)
-    row = await conn.fetchrow(
+    row = await _fetchrow_optional(
+        conn,
         """
         INSERT INTO casino_users(discord_uuid, sender_external_id)
         VALUES($1, $2)
@@ -292,70 +252,7 @@ async def register_user(conn, *, discord_uuid: str, sender_external_id: str) -> 
     return dict(row)
 
 
-async def update_user_balance(conn, *, discord_uuid: str, amount_delta: int) -> Dict[str, Any]:
-    balance_row = await conn.fetchrow(
-        """
-        UPDATE balances
-        SET balance = balance + $2,
-            last_updated = NOW()
-        WHERE discord_uuid = $1
-        RETURNING discord_uuid, balance, last_updated
-        """,
-        discord_uuid,
-        amount_delta,
-    )
-    if balance_row is None:
-        raise LookupError("casino_user_not_found")
-
-    # Mirror into casino_users when available; keep this non-fatal to avoid
-    # failing gameplay if the optional casino table is unavailable.
-    try:
-        await _execute_optional(
-            conn,
-            """
-            INSERT INTO casino_users(discord_uuid, sender_external_id, balance)
-            VALUES($1, $1, $2)
-            ON CONFLICT (discord_uuid)
-            DO UPDATE SET
-                balance = EXCLUDED.balance,
-                updated_at = NOW()
-            """,
-            discord_uuid,
-            balance_row["balance"],
-        )
-    except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError):
-        pass
-
-    return {
-        "discord_uuid": balance_row["discord_uuid"],
-        "sender_external_id": discord_uuid,
-        "balance": balance_row["balance"],
-        "updated_at": balance_row["last_updated"],
-    }
-
-
-async def get_pf_params(conn, *, discord_uuid: str) -> Optional[Dict[str, Any]]:
-    await ensure_schema(conn)
-    row = await _fetchrow_optional(
-        conn,
-        """
-        SELECT discord_uuid, client_seed, server_seed, nonce, created_at, updated_at
-        FROM casino_pf_params
-        WHERE discord_uuid = $1
-        """,
-        discord_uuid,
-    )
-    return _row_to_dict(row)
-
-
-async def save_pf_params(
-    conn,
-    *,
-    discord_uuid: str,
-    client_seed: str,
-    server_seed: str,
-    nonce: int,
-) -> Dict[str, Any]:
+async def upsert_pf_params(conn, discord_uuid: str, client_seed: str, server_seed: str, nonce: int = 0) -> Dict[str, Any]:
     await ensure_schema(conn)
     row = await _fetchrow_optional(
         conn,
@@ -378,43 +275,37 @@ async def save_pf_params(
     return dict(row)
 
 
-async def append_financial_transaction(
-    conn,
-    *,
-    discord_uuid: str,
-    transaction_type: str,
-    amount: int,
-    net_amount: int,
-) -> Dict[str, Any]:
+async def get_pf_params(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
     await ensure_schema(conn)
-
-    exists = await _fetchval_optional(conn,
+    row = await _fetchrow_optional(
+        conn,
         """
-        SELECT 1
-        FROM casino_users
+        SELECT discord_uuid, client_seed, server_seed, nonce, created_at, updated_at
+        FROM casino_pf_params
         WHERE discord_uuid = $1
         """,
         discord_uuid,
     )
-    if exists is None:
-        raise LookupError("casino_user_not_found")
+    return _row_to_dict(row)
 
+
+async def increment_pf_nonce(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
+    await ensure_schema(conn)
     row = await _fetchrow_optional(
         conn,
         """
-        INSERT INTO casino_financial_transactions(discord_uuid, type, amount, net_amount)
-        VALUES($1, $2, $3, $4)
-        RETURNING id, discord_uuid, type, amount, net_amount, created_at
+        UPDATE casino_pf_params
+        SET nonce = nonce + 1,
+            updated_at = NOW()
+        WHERE discord_uuid = $1
+        RETURNING discord_uuid, client_seed, server_seed, nonce, created_at, updated_at
         """,
         discord_uuid,
-        transaction_type,
-        amount,
-        net_amount,
     )
-    return dict(row)
+    return _row_to_dict(row)
 
 
-async def save_account_panel_message(conn, *, message_id: int) -> Dict[str, Any]:
+async def set_account_panel_message(conn, message_id: int) -> Dict[str, Any]:
     await ensure_schema(conn)
     row = await _fetchrow_optional(
         conn,
@@ -483,12 +374,12 @@ async def list_tables(conn) -> list[Dict[str, Any]]:
     await ensure_schema(conn)
     async with conn.transaction():
         rows = await conn.fetch(
-        """
-        SELECT channel_id, category_id, table_number, channel_name, category_name, created_at, updated_at
-        FROM casino_tables
-        ORDER BY table_number ASC, channel_id ASC
-        """
-    )
+            """
+            SELECT channel_id, category_id, table_number, channel_name, category_name, created_at, updated_at
+            FROM casino_tables
+            ORDER BY table_number ASC, channel_id ASC
+            """
+        )
     return [dict(row) for row in rows]
 
 
