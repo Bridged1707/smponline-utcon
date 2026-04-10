@@ -30,6 +30,31 @@ def _quantize(value: Decimal) -> Decimal:
     return _to_decimal(value).quantize(PAYOUT_QUANTIZE, rounding=ROUND_HALF_UP)
 
 
+def _coerce_metadata_dict(value: Any) -> Dict[str, Any]:
+    if value is None:
+        return {}
+
+    if isinstance(value, dict):
+        return dict(value)
+
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            decoded = json.loads(raw)
+        except Exception:
+            return {"_raw_metadata": value}
+        if isinstance(decoded, dict):
+            return decoded
+        return {"_raw_metadata": decoded}
+
+    try:
+        return dict(value)
+    except Exception:
+        return {"_raw_metadata": value}
+
+
 async def _get_fee_profile(conn, discord_uuid: str, requested_tier: Any | None = None) -> tuple[str, int]:
     explicit_tier = str(requested_tier or "").strip().lower()
     if explicit_tier in CASINO_FEE_RATE_BPS_BY_TIER:
@@ -158,11 +183,6 @@ def _extract_affected_count(status: str | None) -> int:
 
 
 async def _execute_optional(conn, query: str, *args):
-    """
-    Run an optional SQL statement inside a savepoint so expected failures on
-    legacy or unavailable casino side tables do not poison the outer
-    transaction.
-    """
     async with conn.transaction():
         return await conn.execute(query, *args)
 
@@ -185,15 +205,6 @@ async def _insert_balance_transaction_compat(
     amount: Decimal,
     metadata: Dict[str, Any] | None = None,
 ) -> str:
-    """
-    Some deployed UTDB instances still enforce older CHECK constraints on
-    balance_transactions.kind. Prefer the semantic gambling kind, but fall back
-    to admin_add with the signed amount so gameplay does not 500.
-
-    Each attempt runs inside its own savepoint. Without that, a rejected insert
-    leaves the outer transaction aborted and every later statement fails with
-    InFailedSQLTransactionError.
-    """
     try:
         async with conn.transaction():
             await balance_repo.insert_balance_transaction(
@@ -371,7 +382,6 @@ async def create_table(
 
 async def list_tables(conn) -> list[Dict[str, Any]]:
     await ensure_schema(conn)
-    await ensure_schema(conn)
     async with conn.transaction():
         rows = await conn.fetch(
             """
@@ -447,19 +457,21 @@ async def start_game_session(
         wager_amount,
     )
 
+    clean_metadata = _coerce_metadata_dict(metadata)
+
     session = await conn.fetchrow(
         """
-        INSERT INTO casino_game_sessions(discord_uuid, game_type, wager_amount, metadata)
-        VALUES ($1, $2, $3, $4::jsonb)
+        INSERT INTO casino_game_sessions(discord_uuid, game_type, wager_amount, status, metadata)
+        VALUES ($1, $2, $3, 'open', $4::jsonb)
         RETURNING *
         """,
         discord_uuid,
         str(game_type).strip().lower(),
         wager_amount,
-        json.dumps(metadata or {}),
+        json.dumps(clean_metadata),
     )
 
-    balance_tx_metadata = {"game_type": str(game_type).strip().lower(), "session_id": session["id"], **(metadata or {})}
+    balance_tx_metadata = {"game_type": str(game_type).strip().lower(), "session_id": session["id"], **clean_metadata}
     applied_balance_kind = await _insert_balance_transaction_compat(
         conn,
         discord_uuid=discord_uuid,
@@ -509,7 +521,9 @@ async def settle_game_session(
     )
     if session_row is None:
         raise LookupError("casino_game_session_not_found")
-    if str(session_row["status"] or "").lower() != "open":
+
+    session_status = str(session_row["status"] or "").strip().lower()
+    if session_status not in {"open", "started"}:
         raise RuntimeError("casino_game_session_already_settled")
 
     discord_uuid = session_row["discord_uuid"]
@@ -549,8 +563,11 @@ async def settle_game_session(
             net_payout_amount,
         )
 
-    merged_metadata = dict(session_row["metadata"] or {})
-    merged_metadata.update(metadata or {})
+    existing_metadata = _coerce_metadata_dict(session_row["metadata"])
+    incoming_metadata = _coerce_metadata_dict(metadata)
+
+    merged_metadata = dict(existing_metadata)
+    merged_metadata.update(incoming_metadata)
     merged_metadata.update({
         "session_id": session_id,
         "game_type": session_row["game_type"],
