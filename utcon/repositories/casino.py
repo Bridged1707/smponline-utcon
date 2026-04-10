@@ -20,8 +20,8 @@ ROLE_FEE_RATE_BPS = {
 }
 
 ADMIN_ROLE_IDS = {
-    # Add hardcoded bypass roles here if needed.
-    # Prefer seeding discord_role_fee_config rows with fee_rate_bps = 0 instead.
+    # Add hardcoded bypass role IDs here if needed.
+    # Prefer DB rows in discord_role_fee_config with fee_rate_bps = 0.
 }
 
 
@@ -63,15 +63,34 @@ def _coerce_metadata_dict(value: Any) -> Dict[str, Any]:
 def _normalize_role_ids(value: Any) -> list[str]:
     if value is None:
         return []
+
     if isinstance(value, (list, tuple, set)):
         result: list[str] = []
         for entry in value:
-            text = str(entry).strip()
+            text = str(entry).strip().strip('"').strip("'")
             if text:
                 result.append(text)
         return result
+
     text = str(value).strip()
-    return [text] if text else []
+    if not text:
+        return []
+
+    # Handle accidental Postgres-array-like string forms:
+    # {1482894699340501114,1482894700749918341}
+    if text.startswith("{") and text.endswith("}"):
+        inner = text[1:-1].strip()
+        if not inner:
+            return []
+        result: list[str] = []
+        for part in inner.split(","):
+            cleaned = part.strip().strip('"').strip("'")
+            if cleaned:
+                result.append(cleaned)
+        return result
+
+    cleaned = text.strip('"').strip("'")
+    return [cleaned] if cleaned else []
 
 
 async def _get_db_configured_role_fees(conn) -> dict[str, int]:
@@ -129,11 +148,38 @@ async def _get_account_row(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
 
-async def _get_fee_profile(conn, discord_uuid: str, requested_tier: Any | None = None) -> tuple[str, int]:
+async def _maybe_persist_live_roles(
+    conn,
+    *,
+    discord_uuid: str,
+    live_role_ids: list[str],
+) -> None:
+    if not live_role_ids:
+        return
+    try:
+        await conn.execute(
+            """
+            UPDATE accounts
+            SET roles = $2::text[]
+            WHERE discord_uuid = $1
+            """,
+            discord_uuid,
+            live_role_ids,
+        )
+    except Exception:
+        pass
+
+
+async def _get_fee_profile(
+    conn,
+    discord_uuid: str,
+    requested_tier: Any | None = None,
+    role_ids: Any | None = None,
+) -> tuple[str, int]:
     """
     Casino fee resolution:
     1. Admin bypass role => 0%
-    2. Lowest matching fee role from accounts.roles
+    2. Lowest matching fee role from live Discord roles if provided, else accounts.roles
     3. If registered/linked but no fee role => default 10%
     4. If not registered/linked => reject
     """
@@ -141,7 +187,9 @@ async def _get_fee_profile(conn, discord_uuid: str, requested_tier: Any | None =
     if not account:
         raise LookupError("casino_user_not_registered")
 
-    roles = _normalize_role_ids(account.get("roles"))
+    live_roles = _normalize_role_ids(role_ids)
+    stored_roles = _normalize_role_ids(account.get("roles"))
+    roles = live_roles if live_roles else stored_roles
     role_set = set(roles)
 
     mc_uuid = str(account.get("mc_uuid") or "").strip()
@@ -153,21 +201,27 @@ async def _get_fee_profile(conn, discord_uuid: str, requested_tier: Any | None =
     admin_role_ids = await _get_admin_role_ids(conn)
 
     if role_set & admin_role_ids:
+        if live_roles:
+            await _maybe_persist_live_roles(conn, discord_uuid=discord_uuid, live_role_ids=live_roles)
         return "admin", 0
 
     matched_role_id: Optional[str] = None
     matched_fee_bps: Optional[int] = None
-    for role_id, fee_bps in configured_role_fees.items():
-        if role_id not in role_set:
+    for configured_role_id, fee_bps in configured_role_fees.items():
+        if configured_role_id not in role_set:
             continue
         if matched_fee_bps is None or int(fee_bps) < matched_fee_bps:
-            matched_role_id = role_id
+            matched_role_id = configured_role_id
             matched_fee_bps = int(fee_bps)
 
     if matched_role_id is not None and matched_fee_bps is not None:
+        if live_roles:
+            await _maybe_persist_live_roles(conn, discord_uuid=discord_uuid, live_role_ids=live_roles)
         return f"role:{matched_role_id}", matched_fee_bps
 
     if is_registered:
+        if live_roles:
+            await _maybe_persist_live_roles(conn, discord_uuid=discord_uuid, live_role_ids=live_roles)
         return "registered_default", DEFAULT_FEE_RATE_BPS
 
     raise LookupError("casino_user_not_registered")
@@ -543,11 +597,14 @@ async def start_game_session(
     if wager_amount <= Decimal("0"):
         raise ValueError("invalid_wager_amount")
 
+    clean_metadata = _coerce_metadata_dict(metadata)
+    live_role_ids = _normalize_role_ids(clean_metadata.get("discord_role_ids"))
+
     account = await _get_account_row(conn, discord_uuid)
     if account is None:
         raise LookupError("casino_user_not_registered")
 
-    await _get_fee_profile(conn, discord_uuid)
+    await _get_fee_profile(conn, discord_uuid, role_ids=live_role_ids)
 
     balance_row = await conn.fetchrow(
         """
@@ -575,8 +632,6 @@ async def start_game_session(
         discord_uuid,
         wager_amount,
     )
-
-    clean_metadata = _coerce_metadata_dict(metadata)
 
     session = await conn.fetchrow(
         """
@@ -672,7 +727,20 @@ async def settle_game_session(
     if requested_gross_payout < Decimal("0"):
         raise ValueError("invalid_gross_payout_amount")
 
-    fee_profile_key, fee_rate_bps = await _get_fee_profile(conn, discord_uuid, requested_tier=requested_tier)
+    existing_metadata = _coerce_metadata_dict(session_row["metadata"])
+    incoming_metadata = _coerce_metadata_dict(metadata)
+
+    live_role_ids = _normalize_role_ids(
+        incoming_metadata.get("discord_role_ids") or existing_metadata.get("discord_role_ids")
+    )
+
+    fee_profile_key, fee_rate_bps = await _get_fee_profile(
+        conn,
+        discord_uuid,
+        requested_tier=requested_tier,
+        role_ids=live_role_ids,
+    )
+
     gross_payout_amount, fee_amount, net_payout_amount, net_profit_amount = _calculate_settlement(
         wager_amount=wager_amount,
         gross_payout_amount=requested_gross_payout,
@@ -691,9 +759,6 @@ async def settle_game_session(
             net_payout_amount,
         )
 
-    existing_metadata = _coerce_metadata_dict(session_row["metadata"])
-    incoming_metadata = _coerce_metadata_dict(metadata)
-
     merged_metadata = dict(existing_metadata)
     merged_metadata.update(incoming_metadata)
     merged_metadata.update(
@@ -705,8 +770,11 @@ async def settle_game_session(
             "fee_amount": str(fee_amount),
             "net_payout_amount": str(net_payout_amount),
             "fee_profile_key": fee_profile_key,
+            "fee_rate_bps": fee_rate_bps,
         }
     )
+    if live_role_ids:
+        merged_metadata["discord_role_ids"] = live_role_ids
 
     updated = await conn.fetchrow(
         """
