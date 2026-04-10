@@ -6,24 +6,29 @@ from decimal import Decimal, ROUND_HALF_UP
 
 import asyncpg
 
-from utcon.repositories import membership as membership_repo
 from utcon.repositories import balance as balance_repo
 
 
 BPS_DENOMINATOR = Decimal("10000")
 PAYOUT_QUANTIZE = Decimal("0.00000001")
-CASINO_FEE_RATE_BPS_BY_TIER = {"free": 1000, "pro": 700, "garry": 300}
+DEFAULT_FEE_RATE_BPS = 1000
+
+ROLE_FEE_RATE_BPS = {
+    "1482895262543515810": 1000,  # 10%
+    "1482894699340501114": 700,   # 7%
+    "1482894700749918341": 300,   # 3%
+}
+
+ADMIN_ROLE_IDS = {
+    # Add hardcoded bypass roles here if needed.
+    # Prefer seeding discord_role_fee_config rows with fee_rate_bps = 0 instead.
+}
 
 
 def _to_decimal(value: Any, default: Decimal = Decimal("0")) -> Decimal:
     if value is None:
         return default
     return Decimal(str(value))
-
-
-def _normalize_tier(value: Any) -> str:
-    tier = str(value or "").strip().lower()
-    return tier if tier in CASINO_FEE_RATE_BPS_BY_TIER else "free"
 
 
 def _quantize(value: Decimal) -> Decimal:
@@ -55,17 +60,125 @@ def _coerce_metadata_dict(value: Any) -> Dict[str, Any]:
         return {"_raw_metadata": value}
 
 
+def _normalize_role_ids(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple, set)):
+        result: list[str] = []
+        for entry in value:
+            text = str(entry).strip()
+            if text:
+                result.append(text)
+        return result
+    text = str(value).strip()
+    return [text] if text else []
+
+
+async def _get_db_configured_role_fees(conn) -> dict[str, int]:
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT discord_role_id, fee_rate_bps
+            FROM discord_role_fee_config
+            WHERE is_active = TRUE
+            """
+        )
+        configured: dict[str, int] = {}
+        for row in rows:
+            role_id = str(row["discord_role_id"] or "").strip()
+            if not role_id:
+                continue
+            configured[role_id] = int(row["fee_rate_bps"])
+        if configured:
+            return configured
+    except Exception:
+        pass
+
+    return dict(ROLE_FEE_RATE_BPS)
+
+
+async def _get_admin_role_ids(conn) -> set[str]:
+    admin_ids = set(ADMIN_ROLE_IDS)
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT discord_role_id
+            FROM discord_role_fee_config
+            WHERE is_active = TRUE
+              AND fee_rate_bps = 0
+            """
+        )
+        for row in rows:
+            role_id = str(row["discord_role_id"] or "").strip()
+            if role_id:
+                admin_ids.add(role_id)
+    except Exception:
+        pass
+    return admin_ids
+
+
+async def _get_account_row(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
+    row = await conn.fetchrow(
+        """
+        SELECT discord_uuid, mc_uuid, mc_name, roles, verified_at
+        FROM accounts
+        WHERE discord_uuid = $1
+        """,
+        discord_uuid,
+    )
+    return dict(row) if row else None
+
+
 async def _get_fee_profile(conn, discord_uuid: str, requested_tier: Any | None = None) -> tuple[str, int]:
-    explicit_tier = str(requested_tier or "").strip().lower()
-    if explicit_tier in CASINO_FEE_RATE_BPS_BY_TIER:
-        return explicit_tier, CASINO_FEE_RATE_BPS_BY_TIER[explicit_tier]
+    """
+    Casino fee resolution:
+    1. Admin bypass role => 0%
+    2. Lowest matching fee role from accounts.roles
+    3. If registered/linked but no fee role => default 10%
+    4. If not registered/linked => reject
+    """
+    account = await _get_account_row(conn, discord_uuid)
+    if not account:
+        raise LookupError("casino_user_not_registered")
 
-    membership = await membership_repo.get_effective_membership(conn, discord_uuid)
-    tier = _normalize_tier((membership or {}).get("tier"))
-    return tier, CASINO_FEE_RATE_BPS_BY_TIER[tier]
+    roles = _normalize_role_ids(account.get("roles"))
+    role_set = set(roles)
+
+    mc_uuid = str(account.get("mc_uuid") or "").strip()
+    mc_name = str(account.get("mc_name") or "").strip()
+    verified_at = account.get("verified_at")
+    is_registered = bool(mc_uuid or mc_name or verified_at)
+
+    configured_role_fees = await _get_db_configured_role_fees(conn)
+    admin_role_ids = await _get_admin_role_ids(conn)
+
+    if role_set & admin_role_ids:
+        return "admin", 0
+
+    matched_role_id: Optional[str] = None
+    matched_fee_bps: Optional[int] = None
+    for role_id, fee_bps in configured_role_fees.items():
+        if role_id not in role_set:
+            continue
+        if matched_fee_bps is None or int(fee_bps) < matched_fee_bps:
+            matched_role_id = role_id
+            matched_fee_bps = int(fee_bps)
+
+    if matched_role_id is not None and matched_fee_bps is not None:
+        return f"role:{matched_role_id}", matched_fee_bps
+
+    if is_registered:
+        return "registered_default", DEFAULT_FEE_RATE_BPS
+
+    raise LookupError("casino_user_not_registered")
 
 
-def _calculate_settlement(*, wager_amount: Decimal, gross_payout_amount: Decimal, fee_rate_bps: int) -> tuple[Decimal, Decimal, Decimal, Decimal]:
+def _calculate_settlement(
+    *,
+    wager_amount: Decimal,
+    gross_payout_amount: Decimal,
+    fee_rate_bps: int,
+) -> tuple[Decimal, Decimal, Decimal, Decimal]:
     wager_amount = _to_decimal(wager_amount)
     gross_payout_amount = _to_decimal(gross_payout_amount)
 
@@ -430,6 +543,12 @@ async def start_game_session(
     if wager_amount <= Decimal("0"):
         raise ValueError("invalid_wager_amount")
 
+    account = await _get_account_row(conn, discord_uuid)
+    if account is None:
+        raise LookupError("casino_user_not_registered")
+
+    await _get_fee_profile(conn, discord_uuid)
+
     balance_row = await conn.fetchrow(
         """
         SELECT discord_uuid, balance
@@ -471,7 +590,11 @@ async def start_game_session(
         json.dumps(clean_metadata),
     )
 
-    balance_tx_metadata = {"game_type": str(game_type).strip().lower(), "session_id": session["id"], **clean_metadata}
+    balance_tx_metadata = {
+        "game_type": str(game_type).strip().lower(),
+        "session_id": session["id"],
+        **clean_metadata,
+    }
     applied_balance_kind = await _insert_balance_transaction_compat(
         conn,
         discord_uuid=discord_uuid,
@@ -498,7 +621,12 @@ async def start_game_session(
     payload = dict(session)
     payload["current_balance"] = new_balance
     payload["applied_balance_transaction_kind"] = applied_balance_kind
-    return {"session": payload, "balance": new_balance, "current_balance": new_balance, "applied_balance_transaction_kind": applied_balance_kind}
+    return {
+        "session": payload,
+        "balance": new_balance,
+        "current_balance": new_balance,
+        "applied_balance_transaction_kind": applied_balance_kind,
+    }
 
 
 async def settle_game_session(
@@ -544,7 +672,7 @@ async def settle_game_session(
     if requested_gross_payout < Decimal("0"):
         raise ValueError("invalid_gross_payout_amount")
 
-    membership_tier, fee_rate_bps = await _get_fee_profile(conn, discord_uuid, requested_tier=requested_tier)
+    fee_profile_key, fee_rate_bps = await _get_fee_profile(conn, discord_uuid, requested_tier=requested_tier)
     gross_payout_amount, fee_amount, net_payout_amount, net_profit_amount = _calculate_settlement(
         wager_amount=wager_amount,
         gross_payout_amount=requested_gross_payout,
@@ -568,14 +696,17 @@ async def settle_game_session(
 
     merged_metadata = dict(existing_metadata)
     merged_metadata.update(incoming_metadata)
-    merged_metadata.update({
-        "session_id": session_id,
-        "game_type": session_row["game_type"],
-        "outcome": outcome,
-        "gross_payout_amount": str(gross_payout_amount),
-        "fee_amount": str(fee_amount),
-        "net_payout_amount": str(net_payout_amount),
-    })
+    merged_metadata.update(
+        {
+            "session_id": session_id,
+            "game_type": session_row["game_type"],
+            "outcome": outcome,
+            "gross_payout_amount": str(gross_payout_amount),
+            "fee_amount": str(fee_amount),
+            "net_payout_amount": str(net_payout_amount),
+            "fee_profile_key": fee_profile_key,
+        }
+    )
 
     updated = await conn.fetchrow(
         """
@@ -595,7 +726,7 @@ async def settle_game_session(
         """,
         session_id,
         str(outcome).strip().lower(),
-        membership_tier,
+        fee_profile_key,
         fee_rate_bps,
         gross_payout_amount,
         fee_amount,
@@ -633,4 +764,9 @@ async def settle_game_session(
     payload["current_balance"] = new_balance
     if applied_balance_kind is not None:
         payload["applied_balance_transaction_kind"] = applied_balance_kind
-    return {"session": payload, "balance": new_balance, "current_balance": new_balance, "applied_balance_transaction_kind": applied_balance_kind}
+    return {
+        "session": payload,
+        "balance": new_balance,
+        "current_balance": new_balance,
+        "applied_balance_transaction_kind": applied_balance_kind,
+    }
