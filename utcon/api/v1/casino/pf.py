@@ -15,14 +15,14 @@ async def get_casino_pf_params(discord_uuid: str):
         params = await casino_repo.get_pf_params(conn, discord_uuid=discord_uuid)
         if params is None:
             raise HTTPException(status_code=404, detail="casino_pf_params_not_found")
-    return {"params": params}
+    return {"status": "ok", "pf": params, "params": params}
 
 
 @router.post("/pf/{discord_uuid}")
 async def save_casino_pf_params(discord_uuid: str, req: CasinoPfSaveRequest):
     async with db.connection() as conn:
         async with conn.transaction():
-            params = await casino_repo.save_pf_params(
+            params = await casino_repo.upsert_pf_params(
                 conn,
                 discord_uuid=discord_uuid,
                 client_seed=req.client_seed,

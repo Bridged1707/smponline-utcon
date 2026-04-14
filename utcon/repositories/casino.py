@@ -453,6 +453,16 @@ async def upsert_pf_params(conn, discord_uuid: str, client_seed: str, server_see
     return dict(row)
 
 
+async def save_pf_params(
+    conn,
+    discord_uuid: str,
+    client_seed: str,
+    server_seed: str,
+    nonce: int = 0,
+) -> Dict[str, Any]:
+    return await upsert_pf_params(conn, discord_uuid, client_seed, server_seed, nonce)
+
+
 async def get_pf_params(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
     await ensure_schema(conn)
     row = await _fetchrow_optional(
