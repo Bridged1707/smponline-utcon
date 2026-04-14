@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 import json
+import logging
 from decimal import Decimal, ROUND_HALF_UP
 
 import asyncpg
@@ -12,6 +13,8 @@ from utcon.repositories import balance as balance_repo
 BPS_DENOMINATOR = Decimal("10000")
 PAYOUT_QUANTIZE = Decimal("0.00000001")
 DEFAULT_FEE_RATE_BPS = 1000
+
+logger = logging.getLogger(__name__)
 
 ROLE_FEE_RATE_BPS = {
     "1482895262543515810": 1000,  # 10%
@@ -432,25 +435,43 @@ async def upsert_user(conn, discord_uuid: str, sender_external_id: str) -> Dict[
 
 async def upsert_pf_params(conn, discord_uuid: str, client_seed: str, server_seed: str, nonce: int = 0) -> Dict[str, Any]:
     await ensure_schema(conn)
-    row = await _fetchrow_optional(
-        conn,
-        """
-        INSERT INTO casino_pf_params(discord_uuid, client_seed, server_seed, nonce)
-        VALUES($1, $2, $3, $4)
-        ON CONFLICT (discord_uuid)
-        DO UPDATE SET
-            client_seed = EXCLUDED.client_seed,
-            server_seed = EXCLUDED.server_seed,
-            nonce = EXCLUDED.nonce,
-            updated_at = NOW()
-        RETURNING discord_uuid, client_seed, server_seed, nonce, created_at, updated_at
-        """,
-        discord_uuid,
-        client_seed,
-        server_seed,
-        nonce,
-    )
-    return dict(row)
+    try:
+        row = await _fetchrow_optional(
+            conn,
+            """
+            INSERT INTO casino_pf_params(discord_uuid, client_seed, server_seed, nonce)
+            VALUES($1, $2, $3, $4)
+            ON CONFLICT (discord_uuid)
+            DO UPDATE SET
+                client_seed = EXCLUDED.client_seed,
+                server_seed = EXCLUDED.server_seed,
+                nonce = EXCLUDED.nonce,
+                updated_at = NOW()
+            RETURNING discord_uuid, client_seed, server_seed, nonce, created_at, updated_at
+            """,
+            discord_uuid,
+            client_seed,
+            server_seed,
+            nonce,
+        )
+        return dict(row)
+    except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError) as exc:
+        # In restricted environments, casino schema may not exist or be writable.
+        # Avoid raising 500 for PF storage unavailability; let caller continue with fallback.
+        logger.warning(
+            "casino_pf_upsert_storage_unavailable discord_uuid=%s error=%s",
+            discord_uuid,
+            exc.__class__.__name__,
+        )
+        return {
+            "discord_uuid": discord_uuid,
+            "client_seed": client_seed,
+            "server_seed": server_seed,
+            "nonce": int(nonce),
+            "created_at": None,
+            "updated_at": None,
+            "persisted": False,
+        }
 
 
 async def save_pf_params(
@@ -465,32 +486,43 @@ async def save_pf_params(
 
 async def get_pf_params(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
     await ensure_schema(conn)
-    row = await _fetchrow_optional(
-        conn,
-        """
-        SELECT discord_uuid, client_seed, server_seed, nonce, created_at, updated_at
-        FROM casino_pf_params
-        WHERE discord_uuid = $1
-        """,
-        discord_uuid,
-    )
-    return _row_to_dict(row)
+    try:
+        row = await _fetchrow_optional(
+            conn,
+            """
+            SELECT discord_uuid, client_seed, server_seed, nonce, created_at, updated_at
+            FROM casino_pf_params
+            WHERE discord_uuid = $1
+            """,
+            discord_uuid,
+        )
+        return _row_to_dict(row)
+    except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError) as exc:
+        logger.warning(
+            "casino_pf_get_storage_unavailable discord_uuid=%s error=%s",
+            discord_uuid,
+            exc.__class__.__name__,
+        )
+        return None
 
 
 async def increment_pf_nonce(conn, discord_uuid: str) -> Optional[Dict[str, Any]]:
     await ensure_schema(conn)
-    row = await _fetchrow_optional(
-        conn,
-        """
-        UPDATE casino_pf_params
-        SET nonce = nonce + 1,
-            updated_at = NOW()
-        WHERE discord_uuid = $1
-        RETURNING discord_uuid, client_seed, server_seed, nonce, created_at, updated_at
-        """,
-        discord_uuid,
-    )
-    return _row_to_dict(row)
+    try:
+        row = await _fetchrow_optional(
+            conn,
+            """
+            UPDATE casino_pf_params
+            SET nonce = nonce + 1,
+                updated_at = NOW()
+            WHERE discord_uuid = $1
+            RETURNING discord_uuid, client_seed, server_seed, nonce, created_at, updated_at
+            """,
+            discord_uuid,
+        )
+        return _row_to_dict(row)
+    except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError):
+        return None
 
 
 async def set_account_panel_message(conn, message_id: int) -> Dict[str, Any]:
