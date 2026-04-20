@@ -359,3 +359,62 @@ def _extract_affected_count(result: str) -> int:
         return int(result.rsplit(" ", 1)[-1])
     except Exception:
         return 0
+    
+
+async def upsert_account_from_discordsrv(
+    conn,
+    *,
+    discord_uuid: str,
+    mc_uuid: str,
+    mc_name: str,
+) -> Optional[Dict[str, Any]]:
+    await create_account(
+        conn,
+        discord_uuid=discord_uuid,
+        mc_uuid=mc_uuid,
+        mc_name=mc_name,
+    )
+    return await get_account_by_discord_uuid(conn, discord_uuid)
+
+
+async def resolve_pending_registration_for_discordsrv(
+    conn,
+    *,
+    discord_uuid: str,
+    mc_uuid: str,
+    mc_name: str,
+) -> int:
+    result = await conn.execute(
+        """
+        UPDATE account_register_queue
+        SET status = $2,
+            matched_shop_id = NULL,
+            matched_owner_uuid = $3::uuid,
+            matched_owner_name = $4,
+            resolved_at = NOW(),
+            failure_reason = NULL
+        WHERE discord_uuid = $1
+          AND status = $5
+        """,
+        discord_uuid,
+        REGISTER_STATUS_MATCHED,
+        mc_uuid,
+        mc_name,
+        REGISTER_STATUS_PENDING,
+    )
+    return _extract_affected_count(result)
+
+
+async def clear_account_link_from_discordsrv(conn, *, discord_uuid: str) -> Optional[Dict[str, Any]]:
+    row = await conn.fetchrow(
+        """
+        UPDATE accounts
+        SET mc_uuid = NULL,
+            mc_name = NULL,
+            verified_at = NULL
+        WHERE discord_uuid = $1
+        RETURNING id, discord_uuid, mc_uuid, mc_name, created_at, verified_at, roles, rates
+        """,
+        discord_uuid,
+    )
+    return dict(row) if row else None

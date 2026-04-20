@@ -13,3 +13,10 @@ class AccountAddRequest(BaseModel):
 
 class AccountRemoveRequest(BaseModel):
     discord_uuid: str
+
+
+class DiscordSRVRegisterRequest(BaseModel):
+    discord_uuid: str
+    mc_uuid: str
+    mc_name: str
+    source: str = "discordsrv-command"
