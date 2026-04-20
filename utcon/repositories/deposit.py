@@ -347,4 +347,5 @@ async def resolve_deposit_match(
         matched_transaction_id,
         processed_by,
     )
+    
     return dict(row)

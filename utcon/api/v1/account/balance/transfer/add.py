@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from utcon import db
 from utcon.repositories import balance as balance_repo
+from utcon.repositories import balance_notifications as balance_notifications_repo
 from utcon.schemas.balance import AdminBalanceAdjustRequest
 
 router = APIRouter(prefix="/v1/account/balance/transfer", tags=["balance"])
@@ -51,6 +52,15 @@ async def add_balance(req: AdminBalanceAdjustRequest):
                 kind="admin_add",
                 amount=amount,
                 metadata={"reference": req.reference} if req.reference else None,
+            )
+
+            await balance_notifications_repo.create_balance_notification(
+                conn,
+                discord_uuid=req.discord_uuid,
+                amount=amount,
+                reason="Balance added",
+                source="admin_add",
+                metadata={"reference": req.reference} if req.reference else {},
             )
 
             new_balance = await balance_repo.get_balance(conn, req.discord_uuid)

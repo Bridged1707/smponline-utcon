@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from utcon import db
 from utcon.repositories import balance as balance_repo
+from utcon.repositories import balance_notifications as balance_notifications_repo
 from utcon.repositories import deposit as deposit_repo
 from utcon.schemas.deposit import DepositChallengeResolveRequest
 
@@ -42,6 +43,25 @@ async def resolve_deposit(req: DepositChallengeResolveRequest):
                     req.matched_transaction_id,
                 )
                 raise HTTPException(status_code=500, detail=f"deposit_resolve_failed:{type(exc).__name__}") from exc
+
+            credited_amount = queue_item.get("credited_amount")
+            if credited_amount is None:
+                credited_amount = queue_item.get("expected_total")
+
+            await balance_notifications_repo.create_balance_notification(
+                conn,
+                discord_uuid=queue_item["discord_uuid"],
+                amount=credited_amount,
+                reason="Deposit completed",
+                source="deposit_resolve",
+                metadata={
+                    "queue_id": queue_item["id"],
+                    "matched_transaction_id": queue_item.get("matched_transaction_id"),
+                    "challenge_shop_id": queue_item["challenge_shop_id"],
+                    "challenge_item_type": queue_item["challenge_item_type"],
+                    "challenge_item_name": queue_item.get("challenge_item_name"),
+                },
+            )
 
             balance = await balance_repo.get_balance(conn, queue_item["discord_uuid"])
 
