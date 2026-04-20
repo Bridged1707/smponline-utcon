@@ -1,177 +1,96 @@
-# utcon/api/v1/account/register/discordsrv.py
-
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
-from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Header, HTTPException
 
-router = APIRouter(tags=["account-registration"])
+from utcon import db
+from utcon.repositories import account as account_repo
+from utcon.schemas.account import DiscordSRVRegisterRequest
 
-
-class DiscordSRVRegisterRequest(BaseModel):
-    discord_uuid: str = Field(..., min_length=1)
-    mc_uuid: str = Field(..., min_length=1)
-    mc_name: str = Field(..., min_length=1)
-    source: str = Field(default="discordsrv-command", min_length=1)
+router = APIRouter(prefix="/v1/account/register/discordsrv", tags=["account"])
 
 
-class DiscordSRVRegisterResponse(BaseModel):
-    status: Literal["matched", "already_registered", "unlinked"]
-    discord_uuid: str
-    mc_uuid: str
-    mc_name: str
-    verified_at: datetime | None = None
-    source: str
-
-
-def _get_expected_bearer_token() -> str:
-    token = os.getenv("DISCORDSRV_REGISTER_BEARER_TOKEN", "").strip()
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="DISCORDSRV_REGISTER_BEARER_TOKEN is not configured."
-        )
-    return token
-
-
-def verify_bearer_token(
-    authorization: str | None = Header(default=None),
-) -> None:
-    expected = _get_expected_bearer_token()
+def _verify_bearer_token(authorization: str | None) -> None:
+    expected = os.getenv("DISCORDSRV_REGISTER_BEARER_TOKEN", "").strip()
+    if not expected:
+        raise HTTPException(status_code=500, detail="discordsrv_bearer_token_not_configured")
 
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing bearer token."
-        )
+        raise HTTPException(status_code=401, detail="missing_bearer_token")
 
-    token = authorization.removeprefix("Bearer ").strip()
-    if token != expected:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid bearer token."
-        )
+    provided = authorization.removeprefix("Bearer ").strip()
+    if provided != expected:
+        raise HTTPException(status_code=401, detail="invalid_bearer_token")
 
 
-@router.post(
-    "/api/v1/account/register/discordsrv",
-    response_model=DiscordSRVRegisterResponse,
-)
+@router.post("")
 async def register_from_discordsrv(
-    payload: DiscordSRVRegisterRequest,
-    request: Request,
-    _: None = Depends(verify_bearer_token),
+    req: DiscordSRVRegisterRequest,
+    authorization: str | None = Header(default=None),
 ):
-    """
-    Expected app.state.db to be an asyncpg pool or connection-compatible object.
-    """
+    _verify_bearer_token(authorization)
 
-    db = request.app.state.db
-    verified_at = datetime.now(timezone.utc)
-
-    async with db.acquire() as conn:
-        existing = await conn.fetchrow(
-            """
-            SELECT discord_uuid, mc_uuid, mc_name, verified_at
-            FROM accounts
-            WHERE discord_uuid = $1
-            """,
-            payload.discord_uuid,
-        )
-
-        if (
-            existing
-            and existing["mc_uuid"] == payload.mc_uuid
-            and existing["mc_name"] == payload.mc_name
-            and existing["verified_at"] is not None
-        ):
-            return DiscordSRVRegisterResponse(
-                status="already_registered",
-                discord_uuid=payload.discord_uuid,
-                mc_uuid=payload.mc_uuid,
-                mc_name=payload.mc_name,
-                verified_at=existing["verified_at"],
-                source=payload.source,
+    async with db.connection() as conn:
+        async with conn.transaction():
+            account = await account_repo.upsert_account_from_discordsrv(
+                conn,
+                discord_uuid=req.discord_uuid,
+                mc_uuid=req.mc_uuid,
+                mc_name=req.mc_name,
+            )
+            await account_repo.resolve_pending_registration_for_discordsrv(
+                conn,
+                discord_uuid=req.discord_uuid,
+                mc_uuid=req.mc_uuid,
+                mc_name=req.mc_name,
             )
 
-        await conn.execute(
-            """
-            INSERT INTO accounts (discord_uuid, mc_uuid, mc_name, verified_at)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (discord_uuid)
-            DO UPDATE SET
-                mc_uuid = EXCLUDED.mc_uuid,
-                mc_name = EXCLUDED.mc_name,
-                verified_at = EXCLUDED.verified_at
-            """,
-            payload.discord_uuid,
-            payload.mc_uuid,
-            payload.mc_name,
-            verified_at.replace(tzinfo=None),
-        )
+    if not account:
+        raise HTTPException(status_code=500, detail="failed_to_register_account")
 
-        await conn.execute(
-            """
-            UPDATE account_register_queue
-            SET status = 'matched',
-                matched_owner_name = $2,
-                matched_owner_uuid = NULL,
-                resolved_at = NOW(),
-                failure_reason = NULL
-            WHERE discord_uuid = $1
-              AND status = 'pending'
-            """,
-            payload.discord_uuid,
-            payload.mc_name,
-        )
-
-    return DiscordSRVRegisterResponse(
-        status="matched",
-        discord_uuid=payload.discord_uuid,
-        mc_uuid=payload.mc_uuid,
-        mc_name=payload.mc_name,
-        verified_at=verified_at,
-        source=payload.source,
-    )
+    return {
+        "status": "registered",
+        "source": req.source,
+        "account": {
+            "discord_uuid": account.get("discord_uuid"),
+            "mc_uuid": account.get("mc_uuid"),
+            "mc_name": account.get("mc_name"),
+            "verified_at": account.get("verified_at"),
+        },
+    }
 
 
-@router.post(
-    "/api/v1/account/register/discordsrv/unlink",
-    response_model=DiscordSRVRegisterResponse,
-)
+@router.post("/unlink")
 async def unregister_from_discordsrv(
-    payload: DiscordSRVRegisterRequest,
-    request: Request,
-    _: None = Depends(verify_bearer_token),
+    req: DiscordSRVRegisterRequest,
+    authorization: str | None = Header(default=None),
 ):
-    db = request.app.state.db
+    _verify_bearer_token(authorization)
 
-    async with db.acquire() as conn:
-        await conn.execute(
-            """
-            UPDATE accounts
-            SET mc_uuid = NULL,
-                mc_name = NULL,
-                verified_at = NULL
-            WHERE discord_uuid = $1
-            """,
-            payload.discord_uuid,
-        )
+    async with db.connection() as conn:
+        async with conn.transaction():
+            account = await account_repo.clear_account_link_from_discordsrv(
+                conn,
+                discord_uuid=req.discord_uuid,
+            )
 
-    return DiscordSRVRegisterResponse(
-        status="unlinked",
-        discord_uuid=payload.discord_uuid,
-        mc_uuid=payload.mc_uuid,
-        mc_name=payload.mc_name,
-        verified_at=None,
-        source=payload.source,
-    )
+    if not account:
+        raise HTTPException(status_code=404, detail="account_not_found")
+
+    return {
+        "status": "unlinked",
+        "source": req.source,
+        "account": {
+            "discord_uuid": account.get("discord_uuid"),
+            "mc_uuid": account.get("mc_uuid"),
+            "mc_name": account.get("mc_name"),
+            "verified_at": account.get("verified_at"),
+        },
+    }
 
 
-@router.get("/api/v1/account/register/discordsrv/health")
-async def discordsrv_register_health(_: None = Depends(verify_bearer_token)):
-    return {"ok": True}
+@router.get("/health")
+async def discordsrv_registration_health(authorization: str | None = Header(default=None)):
+    _verify_bearer_token(authorization)
+    return {"status": "ok"}
