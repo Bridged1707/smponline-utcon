@@ -17,10 +17,24 @@ DEFAULT_FEE_RATE_BPS = 1000
 logger = logging.getLogger(__name__)
 
 ROLE_FEE_RATE_BPS = {
-    "1482895262543515810": 1000,  # 10%
-    "1482894699340501114": 700,   # 7%
-    "1482894700749918341": 300,   # 3%
+    "1482895262543515810": 1000,  # Free Tier - 10%
+    "1482894699340501114": 700,   # Pro Tier - 7%
+    "1482894700749918341": 300,   # Garry Tier - 3%
 }
+
+ROLE_WAGER_CAPS = {
+    "1482895262543515810": Decimal("16"),
+    "1482894699340501114": Decimal("24"),
+    "1482894700749918341": Decimal("32"),
+}
+
+TIER_WAGER_CAPS = {
+    "free": Decimal("16"),
+    "pro": Decimal("24"),
+    "garry": Decimal("32"),
+}
+
+DEFAULT_REGISTERED_WAGER_CAP = TIER_WAGER_CAPS["free"]
 
 ADMIN_ROLE_IDS = {
     # Add hardcoded bypass role IDs here if needed.
@@ -117,6 +131,82 @@ async def _get_db_configured_role_fees(conn) -> dict[str, int]:
         pass
 
     return dict(ROLE_FEE_RATE_BPS)
+
+
+async def _get_db_configured_role_caps(conn) -> dict[str, Decimal]:
+    try:
+        rows = await conn.fetch(
+            """
+            SELECT discord_role_id, tier_key, tier_name
+            FROM discord_role_fee_config
+            WHERE is_active = TRUE
+            """
+        )
+        configured: dict[str, Decimal] = {}
+        for row in rows:
+            role_id = str(row["discord_role_id"] or "").strip()
+            if not role_id:
+                continue
+
+            tier_candidates = [
+                str(row.get("tier_key") or "").strip().lower(),
+                str(row.get("tier_name") or "").strip().lower(),
+            ]
+            cap = None
+            for tier_name in tier_candidates:
+                if tier_name in TIER_WAGER_CAPS:
+                    cap = TIER_WAGER_CAPS[tier_name]
+                    break
+            if cap is not None:
+                configured[role_id] = cap
+        if configured:
+            return configured
+    except Exception:
+        pass
+
+    return dict(ROLE_WAGER_CAPS)
+
+
+async def _get_wager_cap(
+    conn,
+    discord_uuid: str,
+    *,
+    role_ids: Any | None = None,
+) -> Decimal | None:
+    account = await _get_account_row(conn, discord_uuid)
+    if not account:
+        raise LookupError("casino_user_not_registered")
+
+    live_roles = _normalize_role_ids(role_ids)
+    stored_roles = _normalize_role_ids(account.get("roles"))
+    roles = live_roles if live_roles else stored_roles
+    role_set = set(roles)
+
+    admin_role_ids = await _get_admin_role_ids(conn)
+    if role_set & admin_role_ids:
+        if live_roles:
+            await _maybe_persist_live_roles(conn, discord_uuid=discord_uuid, live_role_ids=live_roles)
+        return None
+
+    configured_role_caps = await _get_db_configured_role_caps(conn)
+    matched_caps = [configured_role_caps[role_id] for role_id in role_set if role_id in configured_role_caps]
+
+    if matched_caps:
+        if live_roles:
+            await _maybe_persist_live_roles(conn, discord_uuid=discord_uuid, live_role_ids=live_roles)
+        return max(matched_caps)
+
+    mc_uuid = str(account.get("mc_uuid") or "").strip()
+    mc_name = str(account.get("mc_name") or "").strip()
+    verified_at = account.get("verified_at")
+    is_registered = bool(mc_uuid or mc_name or verified_at)
+
+    if is_registered:
+        if live_roles:
+            await _maybe_persist_live_roles(conn, discord_uuid=discord_uuid, live_role_ids=live_roles)
+        return DEFAULT_REGISTERED_WAGER_CAP
+
+    raise LookupError("casino_user_not_registered")
 
 
 async def _get_admin_role_ids(conn) -> set[str]:
@@ -647,6 +737,10 @@ async def start_game_session(
         raise LookupError("casino_user_not_registered")
 
     await _get_fee_profile(conn, discord_uuid, role_ids=live_role_ids)
+
+    wager_cap = await _get_wager_cap(conn, discord_uuid, role_ids=live_role_ids)
+    if wager_cap is not None and wager_amount > wager_cap:
+        raise ValueError(f"wager_cap_exceeded:{int(wager_cap)}")
 
     balance_row = await conn.fetchrow(
         """
