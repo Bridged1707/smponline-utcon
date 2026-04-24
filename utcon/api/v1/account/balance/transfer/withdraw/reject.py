@@ -3,14 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from utcon import db
-from utcon.repositories import balance as balance_repo
 from utcon.schemas.withdraw import WithdrawResolveRequest
 
 router = APIRouter(prefix="/v1/admin/account/balance/transfer/withdraw", tags=["admin"])
 
 
-@router.post("/resolve")
-async def resolve_withdrawal(req: WithdrawResolveRequest):
+@router.post("/reject")
+async def reject_withdrawal(req: WithdrawResolveRequest):
     withdrawal_id = req.effective_withdrawal_id
 
     async with db.connection() as conn:
@@ -48,7 +47,7 @@ async def resolve_withdrawal(req: WithdrawResolveRequest):
             updated = await conn.fetchrow(
                 """
                 UPDATE withdraw_queue
-                SET status = 'completed',
+                SET status = 'rejected',
                     processed_at = NOW(),
                     processed_by = $2,
                     notes = COALESCE($3, notes)
@@ -60,14 +59,11 @@ async def resolve_withdrawal(req: WithdrawResolveRequest):
                 req.notes,
             )
 
-            balance = await balance_repo.get_balance(conn, row["discord_uuid"])
-
     queue = _serialize_queue_item(updated)
 
     return {
-        "status": "withdraw_resolved",
+        "status": "withdraw_rejected",
         "queue": queue,
-        "balance": float(balance) if balance is not None else None,
     }
 
 
