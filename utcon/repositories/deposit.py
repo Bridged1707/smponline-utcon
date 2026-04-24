@@ -22,6 +22,21 @@ def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _datetime_to_epoch_ms(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return 0
+    if not isinstance(value, datetime):
+        return 0
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return int(value.timestamp() * 1000)
+
+
 def _row_to_dict(row) -> Optional[Dict[str, Any]]:
     return dict(row) if row else None
 
@@ -123,9 +138,17 @@ async def list_candidate_deposit_shops(conn) -> List[Dict[str, Any]]:
         WHERE ds.is_active = TRUE
           AND s.is_enabled = TRUE
           AND s.shop_type = 'SELLING'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM deposit_challenge_queue dcq
+              WHERE dcq.challenge_shop_id = s.shop_id
+                AND dcq.status = $1
+                AND dcq.expires_at > NOW()
+          )
         ORDER BY RANDOM()
         LIMIT 250
-        """
+        """,
+        DEPOSIT_STATUS_PENDING,
     )
     return [dict(row) for row in rows]
 
@@ -267,6 +290,11 @@ async def resolve_deposit_match(
 
     txd = dict(tx)
 
+    requested_at_ms = _datetime_to_epoch_ms(queue_item.get("requested_at"))
+    tx_ts = int(txd.get("timestamp") or 0)
+    if requested_at_ms > 0 and tx_ts > 0 and tx_ts < requested_at_ms:
+        raise ValueError("transaction_before_challenge_opened")
+
     if txd.get("transaction_type") != "buyFromShop":
         raise ValueError("transaction_not_buy_from_shop")
 
@@ -347,5 +375,9 @@ async def resolve_deposit_match(
         matched_transaction_id,
         processed_by,
     )
-    
-    return dict(row)
+    if row is None:
+        raise ValueError("deposit_queue_update_failed")
+
+    result = dict(row)
+    result["credited_amount"] = credited_amount
+    return result
